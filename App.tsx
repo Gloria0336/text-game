@@ -11,14 +11,6 @@ import { fetchModels, generateCompletion } from './services/openRouterService';
 import Button from './components/Button';
 import Input from './components/Input';
 
-// --- Book Logic Constants ---
-const CHARS_PER_PAGE = 220; 
-
-interface BookPage {
-  id: number;
-  content: { role: string; text: string }[];
-}
-
 const App: React.FC = () => {
   // --- State Initialization ---
   const [gameState, setGameState] = useState<GameState>({
@@ -37,7 +29,7 @@ const App: React.FC = () => {
     gmMessages: [{ role: 'assistant', content: '你好！我是你的專屬 GM。我們可以一起討論你想玩什麼類型的遊戲，設定世界觀與角色。\n\n你可以直接告訴我：「我想玩一個賽博龐克的偵探故事」或是「我想當一個在修仙界種田的農夫」。\n\n即使你的想法只有一個詞，點擊下方的「確認設定並開始冒險」，我就會為你自動填補所有細節，開啟一段完整的傳奇之旅！' }],
     messages: [],
     
-    summary: '遊戲尚未開始。',
+    summary: '冒險剛剛開始，一切充滿未知...',
     turnCount: 0,
     isLoading: false,
     error: null,
@@ -48,13 +40,10 @@ const App: React.FC = () => {
   const [showHistory, setShowHistory] = useState(false);
   const [loadingStep, setLoadingStep] = useState(''); 
   
-  // Book State
-  const [currentPageIndex, setCurrentPageIndex] = useState(0);
-  const [isFlipping, setIsFlipping] = useState(false);
-
   // Refs for scrolling
   const gmChatEndRef = useRef<HTMLDivElement>(null);
   const historyEndRef = useRef<HTMLDivElement>(null);
+  const rpScrollEndRef = useRef<HTMLDivElement>(null);
 
   // --- Helper: Update State ---
   const updateState = (updates: Partial<GameState>) => {
@@ -69,66 +58,7 @@ const App: React.FC = () => {
     setTimeout(() => updateState({ error: null }), 6000);
   };
 
-  // --- Logic: Book Pagination ---
-  const bookPages = useMemo(() => {
-    const pages: BookPage[] = [];
-    let currentPageContent: { role: string; text: string }[] = [];
-    let currentCharCount = 0;
-    let pageIdCounter = 0;
-
-    gameState.messages.forEach((msg) => {
-      let displayContent = msg.content.replace(/---UPDATE_START---[\s\S]*?---UPDATE_END---/, '').trim();
-      // 過濾 <think> 標籤內容不顯示在書本中
-      displayContent = displayContent.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-      
-      if (!displayContent) return;
-
-      const blocks = displayContent.split('\n').filter(b => b.trim() !== '');
-      
-      blocks.forEach(block => {
-        if (currentCharCount + block.length > CHARS_PER_PAGE && currentPageContent.length > 0) {
-          pages.push({ id: pageIdCounter++, content: [...currentPageContent] });
-          currentPageContent = [];
-          currentCharCount = 0;
-        }
-
-        if (block.length > CHARS_PER_PAGE) {
-           let remaining = block;
-           while (remaining.length > 0) {
-             const chunk = remaining.slice(0, CHARS_PER_PAGE);
-             remaining = remaining.slice(CHARS_PER_PAGE);
-             
-             if (currentCharCount + chunk.length > CHARS_PER_PAGE && currentPageContent.length > 0) {
-                pages.push({ id: pageIdCounter++, content: [...currentPageContent] });
-                currentPageContent = [];
-                currentCharCount = 0;
-             }
-             currentPageContent.push({ role: msg.role, text: chunk });
-             currentCharCount += chunk.length;
-           }
-        } else {
-          currentPageContent.push({ role: msg.role, text: block });
-          currentCharCount += block.length;
-        }
-      });
-    });
-
-    if (currentPageContent.length > 0) {
-      pages.push({ id: pageIdCounter++, content: currentPageContent });
-    }
-    
-    if (pages.length === 0) pages.push({ id: 0, content: [{ role: 'system', text: '故事尚未開始...' }] });
-
-    return pages;
-  }, [gameState.messages]);
-
   // --- Effects ---
-  useEffect(() => {
-    if (gameState.viewMode === 'RP' && bookPages.length > 0) {
-      setCurrentPageIndex(bookPages.length - 1);
-    }
-  }, [bookPages.length, gameState.viewMode]);
-
   useEffect(() => {
     if (gameState.viewMode === 'GM') {
       const timer = setTimeout(() => {
@@ -137,6 +67,15 @@ const App: React.FC = () => {
       return () => clearTimeout(timer);
     }
   }, [gameState.gmMessages, gameState.viewMode]);
+
+  useEffect(() => {
+    if (gameState.viewMode === 'RP') {
+      const timer = setTimeout(() => {
+        rpScrollEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [gameState.messages, gameState.viewMode, gameState.isLoading]);
 
   useEffect(() => {
     if (showHistory) {
@@ -174,10 +113,16 @@ const App: React.FC = () => {
     try {
       const systemPrompt = `你是一個專業的 TRPG 設計師。目標是協助玩家建立有趣的世界觀。請回應玩家的想法，若想法不足，主動提出兩個有趣的擴展建議方案。`;
 
+      // 嚴格模型修正：確保歷史訊息不以 Assistant 開頭（Claude/Bedrock 要求 System -> User ...）
+      let historyForApi = newMsgs.slice(-10);
+      if (historyForApi.length > 0 && historyForApi[0].role === 'assistant') {
+        historyForApi = historyForApi.slice(1);
+      }
+
       const response = await generateCompletion(
         gameState.apiKey,
         gameState.selectedModel,
-        [{ role: 'system', content: systemPrompt }, ...newMsgs.slice(-10)]
+        [{ role: 'system', content: systemPrompt }, ...historyForApi]
       );
 
       updateState({ 
@@ -225,15 +170,26 @@ const App: React.FC = () => {
     `;
 
     try {
+      // 嚴格模型修正
+      let validHistory = [...gameState.gmMessages];
+      while (validHistory.length > 0 && validHistory[0].role === 'assistant') {
+        validHistory.shift();
+      }
+
+      const messagesForExtraction: Message[] = [
+        ...validHistory,
+        { role: 'user', content: extractPrompt }
+      ];
+
       const jsonStr = await generateCompletion(
         gameState.apiKey,
         gameState.selectedModel,
-        [{ role: 'system', content: extractPrompt }, ...gameState.gmMessages],
+        messagesForExtraction,
         0.3,
         'json_object'
       );
       
-      // 清理可能的思考內容或 Markdown 標籤
+      // 清理 JSON
       let cleanJson = jsonStr.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
       cleanJson = cleanJson.replace(/```json|```/g, '').trim();
       
@@ -256,12 +212,14 @@ const App: React.FC = () => {
           [風格] ${newWorld.promptMix}
           [角色] ${newChar.name} (${newChar.race} ${newChar.class})
           請撰寫冒險的第一章節。使用優美的繁體中文描述此刻的場景感，並以一個突發事件結尾。
+          
+          (請注意：回應不需要包含 JSON 更新區塊)
         `;
         
         const openingText = await generateCompletion(
           gameState.apiKey,
           gameState.selectedModel,
-          [{ role: 'system', content: openingPrompt }]
+          [{ role: 'system', content: openingPrompt }] 
         );
         newMessages = [{ role: 'assistant', content: openingText }];
       }
@@ -272,7 +230,8 @@ const App: React.FC = () => {
         messages: newMessages,
         isGameStarted: true,
         viewMode: 'RP',
-        isLoading: false
+        isLoading: false,
+        summary: `冒險開始於 ${newWorld.name}。`
       });
       setLoadingStep('');
 
@@ -293,14 +252,34 @@ const App: React.FC = () => {
         你是一個專業的 TRPG GM。
         [當前世界] ${gameState.world?.name}
         [角色狀態] ${JSON.stringify(gameState.character)}
-        [指令] 描述玩家行動後的反應。若要更新數值，結尾附上：---UPDATE_START--- {"hp_change": -5} ---UPDATE_END---
-        使用繁體中文，生動地描述。
+        [指令] 
+        1. 描述玩家行動後的反應，推進劇情。
+        2. 每次回應的結尾，你 *必須* 附上一個 JSON 區塊來更新遊戲狀態與摘要。
+        
+        格式如下：
+        ---UPDATE_START--- 
+        {
+          "hp_change": 0, 
+          "mp_change": 0,
+          "add_inventory": [],
+          "summary": "一句話總結：包含世界觀亮點、本回合發生的關鍵事件、一個對未來的伏筆暗示、周圍NPC的狀態、以及主角當前的處境。"
+        } 
+        ---UPDATE_END---
+
+        注意："summary" 欄位非常重要，請務必生成，並保持精簡但資訊量大（約 50-100 字）。
+        使用繁體中文。
       `;
+
+      // 嚴格模型修正
+      let historyForApi = newMessages.slice(-10);
+      while (historyForApi.length > 0 && historyForApi[0].role === 'assistant') {
+        historyForApi.shift();
+      }
 
       const responseContent = await generateCompletion(
         gameState.apiKey,
         gameState.selectedModel,
-        [{ role: 'system', content: systemPrompt }, ...newMessages.slice(-10)]
+        [{ role: 'system', content: systemPrompt }, ...historyForApi]
       );
 
       let finalContent = responseContent;
@@ -315,10 +294,21 @@ const App: React.FC = () => {
           const newChar = { ...gameState.character };
           if (updateData.hp_change) newChar.hp = Math.min(newChar.maxHp, Math.max(0, newChar.hp + updateData.hp_change));
           if (updateData.mp_change) newChar.mp = Math.min(newChar.maxMp, Math.max(0, newChar.mp + updateData.mp_change));
-          if (updateData.add_inventory) updateData.add_inventory.forEach((i: string) => newChar.inventory.push(i));
+          if (updateData.add_inventory && Array.isArray(updateData.add_inventory)) {
+             updateData.add_inventory.forEach((i: string) => newChar.inventory.push(i));
+          }
           
-          updateState({ character: newChar });
-        } catch (e) { console.warn("Update parse fail", e); }
+          // Update Summary
+          let newSummary = gameState.summary;
+          if (updateData.summary) {
+            newSummary = updateData.summary;
+          }
+          
+          updateState({ character: newChar, summary: newSummary });
+        } catch (e) { 
+          console.warn("Update parse fail", e); 
+          // Even if parse fails, we show the text content
+        }
       }
 
       updateState({ 
@@ -329,18 +319,6 @@ const App: React.FC = () => {
 
     } catch (err) {
       handleError(err);
-    }
-  };
-
-  const flipPage = (direction: 'prev' | 'next') => {
-    if (isFlipping) return;
-    if (direction === 'prev' && currentPageIndex > 0) {
-      setIsFlipping(true);
-      setTimeout(() => { setCurrentPageIndex(p => p - 1); setIsFlipping(false); }, 300);
-    }
-    if (direction === 'next' && currentPageIndex < bookPages.length - 1) {
-      setIsFlipping(true);
-      setTimeout(() => { setCurrentPageIndex(p => p + 1); setIsFlipping(false); }, 300);
     }
   };
 
@@ -505,46 +483,68 @@ const App: React.FC = () => {
           </div>
         ) : (
           <div className="flex flex-col h-full bg-[#050505] relative overflow-hidden">
-            {/* Book UI */}
-            <div className="flex-1 flex items-center justify-center p-4 relative overflow-hidden">
-               {/* Linear Log Button */}
-               <button onClick={() => setShowHistory(true)} className="absolute top-6 left-6 z-30 bg-rpg-800/80 hover:bg-rpg-700 backdrop-blur px-5 py-2.5 rounded-full border border-white/10 text-xs text-white/90 transition-all shadow-xl">📜 冒險全卷</button>
-               
-               <div className="absolute left-6 top-1/2 -translate-y-1/2 z-10">
-                 <button onClick={() => flipPage('prev')} disabled={currentPageIndex === 0} className="p-5 bg-white/5 rounded-full hover:bg-white/10 text-white disabled:opacity-0 transition-all border border-white/5 shadow-2xl">◀</button>
-               </div>
-               <div className="absolute right-6 top-1/2 -translate-y-1/2 z-10">
-                 <button onClick={() => flipPage('next')} disabled={currentPageIndex === bookPages.length - 1} className="p-5 bg-white/5 rounded-full hover:bg-white/10 text-white disabled:opacity-0 transition-all border border-white/5 shadow-2xl">▶</button>
-               </div>
+            {/* Standard Chat UI for RP */}
+            <div className="flex-1 relative overflow-hidden bg-rpg-900">
+               {/* Background Texture Overlay */}
+               <div className="absolute inset-0 opacity-10 bg-[url('https://www.transparenttextures.com/patterns/dark-leather.png')] pointer-events-none"></div>
 
-               <div className={`relative w-full max-w-[560px] h-[84vh] bg-rpg-paper text-rpg-ink book-shadow rounded-sm transition-all duration-700 transform-gpu ${isFlipping ? 'opacity-30 translate-x-12 rotate-1 scale-90' : 'opacity-100 translate-x-0 rotate-0 scale-100'}`}>
-                 <div className="absolute inset-0 pointer-events-none opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(#000 1.5px, transparent 0.5px)', backgroundSize: '16px 16px' }}></div>
-                 <div className="absolute top-4 left-0 right-0 text-center text-[9px] text-rpg-ink/40 font-serif tracking-widest uppercase font-bold">
-                   {gameState.world.name} — 第 {currentPageIndex + 1} 頁
-                 </div>
-                 <div className="absolute top-12 bottom-12 left-12 right-12 writing-vertical-rl text-orientation-mixed font-serif text-2xl leading-[2.6] overflow-hidden flex flex-col items-start select-none">
-                   {bookPages[currentPageIndex]?.content.map((b, idx) => (
-                     <div key={idx} className={`${b.role === 'user' ? 'font-bold border-r-[3px] border-rpg-ink/10 pr-3' : ''} mb-6 tracking-wide`}>
-                       {b.text}
-                     </div>
-                   ))}
-                   {gameState.isLoading && currentPageIndex === bookPages.length - 1 && <span className="animate-pulse text-rpg-accent font-bold">...</span>}
+               {/* Header / Top Controls */}
+               <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center z-20 bg-gradient-to-b from-rpg-900/90 to-transparent pointer-events-none">
+                  <button onClick={() => setShowHistory(true)} className="pointer-events-auto bg-rpg-800/80 hover:bg-rpg-700 backdrop-blur px-5 py-2.5 rounded-full border border-white/10 text-xs text-white/90 transition-all shadow-xl">📜 冒險全卷</button>
+                  <div className="text-rpg-muted text-xs font-mono opacity-50">{gameState.world.name} — Turn {gameState.turnCount}</div>
+               </div>
+               
+               {/* Vertical Chat Container */}
+               <div className="absolute inset-0 pt-16 pb-0 px-4 md:px-0 overflow-y-auto overflow-x-hidden custom-scrollbar flex flex-col">
+                 <div className="flex-1 max-w-4xl mx-auto w-full space-y-8 pb-8">
+                    {gameState.messages.map((msg, i) => {
+                      const displayContent = msg.content.replace(/---UPDATE_START---[\s\S]*?---UPDATE_END---/, '').trim();
+                      return (
+                        <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in`}>
+                           <div className={`
+                             relative max-w-[90%] md:max-w-[80%] p-6 rounded-2xl shadow-xl border
+                             ${msg.role === 'user' 
+                               ? 'bg-rpg-accent/10 border-rpg-accent/30 text-white rounded-tr-none mr-2' 
+                               : 'bg-rpg-800/80 border-rpg-700/50 text-gray-200 rounded-tl-none ml-2 backdrop-blur-sm'}
+                           `}>
+                             {/* Role Label */}
+                             <div className={`text-[10px] uppercase font-bold tracking-widest mb-2 opacity-50 ${msg.role === 'user' ? 'text-right text-rpg-accent' : 'text-left text-rpg-muted'}`}>
+                               {msg.role === 'user' ? 'YOU' : 'GAME MASTER'}
+                             </div>
+                             
+                             {/* Content */}
+                             {renderMessageContent(displayContent)}
+                           </div>
+                        </div>
+                      );
+                    })}
+                    
+                    {gameState.isLoading && (
+                      <div className="flex justify-start animate-fade-in ml-2">
+                        <div className="bg-rpg-800/50 border border-rpg-700/30 p-4 rounded-2xl rounded-tl-none flex items-center gap-2">
+                          <span className="w-2 h-2 bg-rpg-accent rounded-full animate-bounce"></span>
+                          <span className="w-2 h-2 bg-rpg-accent rounded-full animate-bounce delay-100"></span>
+                          <span className="w-2 h-2 bg-rpg-accent rounded-full animate-bounce delay-200"></span>
+                        </div>
+                      </div>
+                    )}
+                    <div ref={rpScrollEndRef} className="h-4"></div>
                  </div>
                </div>
             </div>
 
             {/* Input Area */}
-            <div className="p-8 bg-rpg-900 border-t border-rpg-700/50 flex-none">
+            <div className="p-6 md:p-8 bg-rpg-900 border-t border-rpg-700/50 flex-none z-20 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
                <div className="max-w-2xl mx-auto flex gap-4">
                  <textarea 
-                    className="flex-1 bg-rpg-800/80 border border-rpg-700 rounded-3xl p-5 text-rpg-text h-16 resize-none focus:ring-2 focus:ring-rpg-accent outline-none transition-all placeholder:text-rpg-muted/40 font-serif text-lg" 
+                    className="flex-1 bg-rpg-800/50 border border-rpg-700 rounded-3xl p-5 text-rpg-text h-16 resize-none focus:ring-2 focus:ring-rpg-accent outline-none transition-all placeholder:text-rpg-muted/40 font-serif text-lg" 
                     placeholder="描述你的行動..." 
                     value={inputMessage} 
                     onChange={(e) => setInputMessage(e.target.value)} 
                     onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendRPMessage()} 
                     disabled={gameState.isLoading}
                  />
-                 <Button onClick={handleSendRPMessage} isLoading={gameState.isLoading} className="h-16 px-12 rounded-3xl font-bold text-lg">行動</Button>
+                 <Button onClick={handleSendRPMessage} isLoading={gameState.isLoading} className="h-16 px-10 rounded-3xl font-bold text-lg shadow-lg shadow-rpg-accent/10">行動</Button>
                </div>
             </div>
           </div>
@@ -558,18 +558,29 @@ const App: React.FC = () => {
           <span className="writing-vertical-rl text-[10px] tracking-widest">角色檔案</span>
         </button>
       )}
-      <div className={`fixed inset-y-0 right-0 w-80 bg-rpg-900 border-l border-rpg-700/50 z-[120] shadow-2xl transform transition-transform duration-500 cubic-bezier(0.4, 0, 0.2, 1) ${showSidebar ? 'translate-x-0' : 'translate-x-full'} p-6 flex flex-col backdrop-blur-md bg-opacity-95`}>
-        <div className="flex justify-between items-center mb-8">
+      <div className={`fixed inset-y-0 right-0 w-80 md:w-96 bg-rpg-900 border-l border-rpg-700/50 z-[120] shadow-2xl transform transition-transform duration-500 cubic-bezier(0.4, 0, 0.2, 1) ${showSidebar ? 'translate-x-0' : 'translate-x-full'} p-6 flex flex-col backdrop-blur-md bg-opacity-95`}>
+        <div className="flex justify-between items-center mb-6">
           <h3 className="text-xl font-bold text-rpg-accent tracking-widest uppercase italic border-b-2 border-rpg-accent/30 pb-1">Character Sheet</h3>
           <button onClick={() => setShowSidebar(false)} className="text-rpg-muted hover:text-white text-3xl transition-colors">✕</button>
         </div>
 
-        <div className="flex flex-col gap-3 mb-8">
+        <div className="flex flex-col gap-3 mb-6">
           <Button variant={gameState.viewMode === 'GM' ? 'primary' : 'secondary'} className="rounded-xl py-3 shadow-lg" onClick={() => updateState({ viewMode: 'GM' })}>切換至 GM 設計室</Button>
           <Button variant={gameState.viewMode === 'RP' ? 'primary' : 'secondary'} className="rounded-xl py-3 shadow-lg" disabled={!gameState.isGameStarted} onClick={() => updateState({ viewMode: 'RP' })}>返回冒險現場</Button>
         </div>
 
-        <div className="flex-1 overflow-y-auto space-y-8 no-scrollbar pr-1">
+        <div className="flex-1 overflow-y-auto space-y-6 no-scrollbar pr-1">
+           {/* Summary Section */}
+           <div className="bg-amber-900/20 border border-amber-700/30 p-5 rounded-2xl relative overflow-hidden group">
+             <div className="absolute top-0 left-0 w-1 h-full bg-amber-600"></div>
+             <div className="text-[10px] text-amber-500 uppercase tracking-[0.2em] mb-2 font-bold flex items-center gap-2">
+                <span className="animate-pulse">●</span> 當前局勢摘要
+             </div>
+             <p className="text-sm text-gray-300 leading-relaxed italic">
+               {gameState.summary || "等待冒險展開..."}
+             </p>
+           </div>
+
            <div className="bg-gradient-to-br from-rpg-800 to-rpg-900 p-6 rounded-3xl border border-rpg-700 shadow-inner">
              <div className="text-[9px] text-rpg-muted uppercase tracking-[0.3em] mb-2 font-bold">Adventurer Dossier</div>
              <div className="text-2xl font-serif text-white mb-1 drop-shadow-md">{gameState.character.name}</div>
