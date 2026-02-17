@@ -178,9 +178,14 @@ const App: React.FC = () => {
   const rpScrollEndRef = useRef<HTMLDivElement>(null);
   const modelListRef = useRef<HTMLDivElement>(null);
 
-  // Helper for mobile detection (simple regex check for mobile UA)
+  // Helper for mobile detection
   const isMobileDevice = () => {
-    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    // Check standard mobile user agents
+    const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    // Check for iPadOS 13+ desktop mode (MacIntel + Touch)
+    const isIPadOS = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+    
+    return isMobileUA || isIPadOS;
   };
 
   // --- Effects: Load Profiles ---
