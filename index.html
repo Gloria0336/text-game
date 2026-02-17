@@ -4,10 +4,6 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>無限文字冒險 - Infinite Adventure</title>
-    <!-- Google Fonts: Noto Serif TC for the book feel -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;700&display=swap" rel="stylesheet">
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -31,8 +27,9 @@
               }
             },
             fontFamily: {
+              sans: ['"Microsoft JhengHei"', '"Microsoft YaHei"', '"Heiti TC"', 'sans-serif'],
+              serif: ['"Microsoft JhengHei"', '"Microsoft YaHei"', '"Heiti TC"', 'serif'], 
               mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', "Liberation Mono", "Courier New", "monospace"],
-              serif: ['"Noto Serif TC"', 'serif'],
             },
             animation: {
               'flip-in': 'flipIn 0.6s cubic-bezier(0.4, 0.0, 0.2, 1) forwards',
@@ -101,12 +98,13 @@
   "imports": {
     "react/": "https://esm.sh/react@^19.2.4/",
     "react": "https://esm.sh/react@^19.2.4",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.4/"
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.41.0"
   }
 }
 </script>
 </head>
-  <body class="bg-rpg-900 text-rpg-text h-screen overflow-hidden selection:bg-rpg-accent selection:text-white">
+  <body class="bg-rpg-900 text-rpg-text h-screen overflow-hidden selection:bg-rpg-accent selection:text-white font-sans">
     <div id="root"></div>
   </body>
 </html>

@@ -1,13 +1,19 @@
+
 export type ViewMode = 'GM' | 'RP';
+
+export type Difficulty = 'Story' | 'Normal' | 'Hard' | 'Hardcore';
 
 export interface OpenRouterModel {
   id: string;
   name: string;
-  context_length: number;
-  pricing: {
-    prompt: string;
-    completion: string;
-  };
+}
+
+export interface Skill {
+  name: string;
+  description: string;
+  cost: number;
+  type: 'Active' | 'Passive';
+  reason?: string; // Why this skill is available (e.g. "Derived from your battle with the dragon")
 }
 
 export interface CharacterStats {
@@ -19,8 +25,10 @@ export interface CharacterStats {
   maxHp: number;
   mp: number;
   maxMp: number;
-  attributes: Record<string, number>; // STR, DEX, INT, etc.
-  skills: string[];
+  skillPoints: number; // New: Currency for learning skills
+  attributes: Record<string, number>; 
+  skills: string[]; // List of learned skill names
+  potentialSkills: Skill[]; // New: Skills available to learn
   inventory: string[];
   statusEffects: string[];
   background: string;
@@ -44,21 +52,26 @@ export interface GameState {
   selectedModel: string;
   models: OpenRouterModel[];
   customStyle: string;
+  isStyleActive: boolean; // New: Toggle for custom style
+  isJailbreakActive: boolean; // New: Toggle for NSFW/Jailbreak
+  difficulty: Difficulty; 
   
   // App Logic
   viewMode: ViewMode;
   showSettings: boolean;
-  isGameStarted: boolean; // Has the initial generation happened?
+  showSkillTree: boolean; // New: Toggle for Skill Tree Modal
+  showStyleEditor: boolean; // New: Toggle for Style Editor Modal
+  isGameStarted: boolean; 
   
   // Game Data
   world: WorldSetting;
   character: CharacterStats;
   
   // Chat Histories
-  gmMessages: Message[]; // Chat with the Designer/GM (Meta-game)
-  messages: Message[];   // The Adventure Log (In-game)
+  gmMessages: Message[]; 
+  messages: Message[];   
   
-  summary: string; // The memory of past events
+  summary: string; 
   turnCount: number;
   isLoading: boolean;
   error: string | null;
@@ -73,8 +86,10 @@ export const DEFAULT_CHARACTER: CharacterStats = {
   maxHp: 100,
   mp: 50,
   maxMp: 50,
+  skillPoints: 0,
   attributes: {},
   skills: [],
+  potentialSkills: [],
   inventory: [],
   statusEffects: [],
   background: "尚未設定"
