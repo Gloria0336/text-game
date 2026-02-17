@@ -12,6 +12,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, currentWorkingDir, '');
 
   return {
+    base: '/text-game/',
     plugins: [react()],
     resolve: {
       alias: {
