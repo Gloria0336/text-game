@@ -11,7 +11,10 @@
   "dependencies": {
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "@google/genai": "^1.41.0"
+    "@google/genai": "^1.41.0",
+    "@vitejs/plugin-react": "^5.1.4",
+    "vite": "^7.3.1",
+    "path": "^0.12.7"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

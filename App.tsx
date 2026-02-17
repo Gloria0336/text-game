@@ -46,7 +46,9 @@ const Icon = ({ name, className = "w-5 h-5" }: { name: string, className?: strin
     dice: <path strokeLinecap="round" strokeLinejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25m0-9v9" />,
     tree: <path strokeLinecap="round" strokeLinejoin="round" d="M12 21v-8.25M15.75 21v-8.25M8.25 21v-8.25M3 9l9-6 9 6m-1.5 12V10.332A48.36 48.36 0 0012 9.75c-2.551 0-5.056.2-7.5.582V21M3 21h18M12 6.75h.008v.008H12V6.75z" />,
     book: <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />,
-    edit: <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.69 1.04l-3.296 1.311a.5.5 0 01-.65-.65l1.311-3.297a4.5 4.5 0 011.04-1.697l10.582-10.582zM2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+    edit: <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.69 1.04l-3.296 1.311a.5.5 0 01-.65-.65l1.311-3.297a4.5 4.5 0 011.04-1.697l10.582-10.582zM2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />,
+    plus: <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />,
+    login: <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
   }
   return (
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={className}>
@@ -111,28 +113,23 @@ const DiceResultCard = ({ data }: { data: DiceRollData }) => {
   );
 };
 
-
-const App: React.FC = () => {
-  // --- State Initialization ---
-  const [gameState, setGameState] = useState<GameState>({
-    apiKey: '',
-    selectedModel: '',
-    models: [],
-    customStyle: INITIAL_STYLE_BOOK,
-    isStyleActive: true,
-    isJailbreakActive: true, // Default to true
-    difficulty: 'Normal', // Default Difficulty
-    
-    viewMode: 'GM', 
-    showSettings: true,
-    showSkillTree: false, // New
-    showStyleEditor: false, // New
-    isGameStarted: false,
-    
-    world: DEFAULT_WORLD,
-    character: DEFAULT_CHARACTER,
-    
-    gmMessages: [{ role: 'assistant', content: `你好！我是 Roleplay Game Master。我很樂意為你開啟一段全新的冒险。
+// --- INITIAL STATE FACTORY ---
+const createInitialState = (): GameState => ({
+  apiKey: '',
+  selectedModel: '',
+  models: [],
+  customStyle: INITIAL_STYLE_BOOK,
+  isStyleActive: true,
+  isJailbreakActive: true, 
+  difficulty: 'Normal',
+  viewMode: 'GM', 
+  showSettings: true,
+  showSkillTree: false,
+  showStyleEditor: false,
+  isGameStarted: false,
+  world: DEFAULT_WORLD,
+  character: DEFAULT_CHARACTER,
+  gmMessages: [{ role: 'assistant', content: `你好！我是 Roleplay Game Master。我很樂意為你開啟一段全新的冒险。
 
 在進入正式的角色扮演模式之前，我們需要先在 GM 模式下完成場景的初步設定。請告訴我你對以下幾個方面的想法：
 
@@ -142,19 +139,28 @@ const App: React.FC = () => {
 你的角色： 你想扮演一個甚麼樣的角色？你的身份、能力，以及你目前的處境是什么？
 特定主題或偏好： 有沒有你特別想體驗的情節、XP、或者特定的故事走向？
 如果你還沒有完全想好，也可以只給我一个模糊的概念，由我來為你補充細節。` }],
-    messages: [],
-    
-    summary: `📖 STORY STATE
+  messages: [],
+  summary: `📖 STORY STATE
 Active Threads: 冒險序章
 NPC States: 無
 Planted Payoffs: 世界觀建立中
 World Lock: 尚未鎖定
 Arc Position: 開端
 PC Shift: 初始狀態`,
-    turnCount: 0,
-    isLoading: false,
-    error: null,
-  });
+  turnCount: 0,
+  isLoading: false,
+  error: null,
+});
+
+const App: React.FC = () => {
+  // --- Profile State ---
+  const [userProfile, setUserProfile] = useState<string | null>(null);
+  const [availableProfiles, setAvailableProfiles] = useState<string[]>([]);
+  const [newProfileName, setNewProfileName] = useState('');
+  
+  // --- Game State ---
+  // Initialize with default, but will be overwritten by load or reset
+  const [gameState, setGameState] = useState<GameState>(createInitialState());
 
   const [inputMessage, setInputMessage] = useState('');
   const [showSidebar, setShowSidebar] = useState(false);
@@ -172,22 +178,36 @@ PC Shift: 初始狀態`,
   const rpScrollEndRef = useRef<HTMLDivElement>(null);
   const modelListRef = useRef<HTMLDivElement>(null);
 
-  // --- Initialize from LocalStorage ---
+  // --- Effects: Load Profiles ---
   useEffect(() => {
-    const savedKey = localStorage.getItem('openrouter_api_key');
-    if (savedKey) {
-      updateState({ apiKey: savedKey });
+    try {
+      const stored = localStorage.getItem('rpg_profiles');
+      if (stored) {
+        setAvailableProfiles(JSON.parse(stored));
+      }
+    } catch (e) {
+      console.error("Failed to load profiles", e);
     }
   }, []);
+
+  // --- Effects: Auto Save ---
+  useEffect(() => {
+    if (userProfile && gameState) {
+       // Debounce slightly or just save on every render for now (React batches updates usually)
+       // We only save meaningful data to avoid huge files if not needed, but saving whole state is safest.
+       // Important: apiKey is inside gameState.
+       const saveObject = {
+         timestamp: new Date().toISOString(),
+         gameState: gameState
+       };
+       localStorage.setItem(`rpg_save_${userProfile}`, JSON.stringify(saveObject));
+    }
+  }, [gameState, userProfile]);
 
   // --- Helper: Update State ---
   const updateState = (updates: Partial<GameState>) => {
     setGameState(prev => {
       const newState = { ...prev, ...updates };
-      // Save key if it changed
-      if (updates.apiKey !== undefined) {
-         localStorage.setItem('openrouter_api_key', updates.apiKey.trim());
-      }
       return newState;
     });
   };
@@ -200,7 +220,62 @@ PC Shift: 初始狀態`,
     setTimeout(() => updateState({ error: null }), 6000);
   };
 
-  // --- Effects ---
+  // --- Profile Handlers ---
+  const handleLogin = (profileName: string) => {
+    const saveKey = `rpg_save_${profileName}`;
+    const savedDataStr = localStorage.getItem(saveKey);
+    
+    if (savedDataStr) {
+      try {
+        const parsed = JSON.parse(savedDataStr);
+        if (parsed.gameState) {
+          // Merge with default to ensure new fields in future versions don't break old saves
+          setGameState({ ...createInitialState(), ...parsed.gameState });
+        }
+      } catch (e) {
+        console.error("Save file corrupted", e);
+        alert("存檔損毀，將載入預設狀態。");
+        setGameState(createInitialState());
+      }
+    } else {
+      // New profile setup
+      setGameState(createInitialState());
+      // Update profile list
+      const newProfiles = [...availableProfiles, profileName];
+      if (!availableProfiles.includes(profileName)) {
+        setAvailableProfiles(newProfiles);
+        localStorage.setItem('rpg_profiles', JSON.stringify(newProfiles));
+      }
+    }
+    setUserProfile(profileName);
+  };
+
+  const handleCreateProfile = () => {
+    const name = newProfileName.trim();
+    if (!name) return;
+    if (availableProfiles.includes(name)) {
+      alert("此名稱已存在，請直接登入");
+      return;
+    }
+    handleLogin(name);
+  };
+
+  const handleDeleteProfile = (e: React.MouseEvent, name: string) => {
+    e.stopPropagation();
+    if (!window.confirm(`確定要刪除旅程 "${name}" 嗎？此操作無法復原。`)) return;
+    
+    const newProfiles = availableProfiles.filter(p => p !== name);
+    setAvailableProfiles(newProfiles);
+    localStorage.setItem('rpg_profiles', JSON.stringify(newProfiles));
+    localStorage.removeItem(`rpg_save_${name}`);
+  };
+
+  const handleLogout = () => {
+    setUserProfile(null);
+    setGameState(createInitialState());
+  };
+
+  // --- Effects (Scroll) ---
   useEffect(() => {
     if (gameState.viewMode === 'GM') {
       const timer = setTimeout(() => {
@@ -1057,7 +1132,7 @@ PC Shift: 無`
           <div className="space-y-6">
             <div>
               <div className="flex justify-between items-center mb-1">
-                <label className="block text-sm font-medium text-rpg-muted">OpenRouter API Key</label>
+                <label className="block text-sm font-medium text-rpg-muted">OpenRouter API Key (綁定於目前存檔: {userProfile})</label>
                 <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" className="text-[10px] text-rpg-accent hover:underline flex items-center gap-1">
                     <Icon name="key" className="w-3 h-3" /> 取得金鑰
                 </a>
@@ -1068,6 +1143,7 @@ PC Shift: 無`
                 value={gameState.apiKey} 
                 onChange={(e) => updateState({ apiKey: e.target.value })} 
               />
+              <p className="text-[10px] text-rpg-muted mt-1">此 Key 將自動儲存於您的瀏覽器中。</p>
             </div>
 
             <Button onClick={handleFetchModels} isLoading={gameState.isLoading} className="w-full py-3" variant="secondary">
@@ -1148,18 +1224,97 @@ PC Shift: 無`
                  <option value="Hardcore">地獄模式 (Hardcore) - 極易死亡 (DC 20+)</option>
                </select>
             </div>
+            
+            <div className="pt-6 border-t border-rpg-700">
+               <Button onClick={handleLogout} variant="danger" className="w-full">
+                 登出並切換存檔 (Logout)
+               </Button>
+            </div>
 
           </div>
-          <div className="mt-10 flex gap-4">
+          <div className="mt-6 flex gap-4">
             <Button onClick={() => updateState({ showSettings: false })} variant="ghost" className="flex-1">關閉</Button>
             <Button onClick={() => updateState({ showSettings: false })} disabled={!gameState.apiKey || !gameState.selectedModel} className="flex-1 font-bold shadow-lg shadow-rpg-accent/10">
-              確認並開始
+              確認並返回
             </Button>
           </div>
         </div>
       </div>
     );
   };
+  
+  const renderLoginScreen = () => (
+    <div className="flex-1 h-full w-full bg-[#050505] relative overflow-hidden flex items-center justify-center p-4">
+       <div className="absolute inset-0 opacity-20 bg-[url('https://www.transparenttextures.com/patterns/dark-leather.png')]"></div>
+       <div className="bg-rpg-900/90 border border-rpg-700 p-8 md:p-12 rounded-3xl shadow-2xl max-w-md w-full relative z-10 backdrop-blur">
+          <div className="text-center mb-10">
+             <h1 className="text-4xl font-black text-white mb-2 tracking-tight">無限文字冒險</h1>
+             <p className="text-rpg-accent text-sm tracking-[0.3em] uppercase">Infinite Adventure</p>
+          </div>
+
+          <div className="space-y-6">
+             <div className="space-y-4">
+               <label className="text-xs font-bold text-rpg-muted uppercase tracking-widest block">選擇現有旅程 (Continue Journey)</label>
+               <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
+                 {availableProfiles.length > 0 ? availableProfiles.map(name => (
+                   <div key={name} className="flex gap-2">
+                     <button 
+                       onClick={() => handleLogin(name)}
+                       className="flex-1 bg-rpg-800 hover:bg-rpg-700 text-left px-4 py-3 rounded-xl border border-rpg-700 transition-colors flex items-center gap-3 group"
+                     >
+                       <div className="w-8 h-8 rounded-full bg-rpg-900 flex items-center justify-center text-rpg-accent group-hover:text-white transition-colors">
+                         <Icon name="user" className="w-4 h-4" />
+                       </div>
+                       <span className="font-bold text-gray-200">{name}</span>
+                     </button>
+                     <button 
+                       onClick={(e) => handleDeleteProfile(e, name)}
+                       className="bg-rpg-800 hover:bg-red-900/50 text-rpg-muted hover:text-red-500 px-3 rounded-xl border border-rpg-700 transition-colors"
+                     >
+                       <Icon name="trash" className="w-4 h-4" />
+                     </button>
+                   </div>
+                 )) : (
+                   <div className="text-center py-6 text-rpg-muted text-sm italic border border-dashed border-rpg-700 rounded-xl bg-rpg-800/30">
+                     尚未建立任何存檔
+                   </div>
+                 )}
+               </div>
+             </div>
+             
+             <div className="relative py-4">
+               <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-rpg-700"></div></div>
+               <div className="relative flex justify-center text-xs uppercase"><span className="bg-rpg-900 px-2 text-rpg-muted">Or Create New</span></div>
+             </div>
+
+             <div className="space-y-3">
+               <Input 
+                 placeholder="輸入新旅程名稱..." 
+                 value={newProfileName}
+                 onChange={(e) => setNewProfileName(e.target.value)}
+                 onKeyDown={(e) => e.key === 'Enter' && handleCreateProfile()}
+               />
+               <Button onClick={handleCreateProfile} className="w-full py-3 font-bold" disabled={!newProfileName.trim()}>
+                 <Icon name="plus" className="w-5 h-5" /> 開始新的冒險
+               </Button>
+             </div>
+          </div>
+          
+          <div className="mt-8 text-center text-[10px] text-rpg-muted/50">
+             所有的遊戲進度與 API Key 皆儲存於此瀏覽器中。
+          </div>
+       </div>
+    </div>
+  );
+
+  // --- Main Render Switch ---
+  if (!userProfile) {
+    return (
+      <div className="h-screen w-screen bg-rpg-900 text-rpg-text font-sans">
+        {renderLoginScreen()}
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen w-screen bg-rpg-900 text-rpg-text font-sans flex overflow-hidden">
