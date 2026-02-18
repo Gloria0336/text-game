@@ -13,7 +13,7 @@ export interface Skill {
   description: string;
   cost: number;
   type: 'Active' | 'Passive';
-  reason?: string; // Why this skill is available (e.g. "Derived from your battle with the dragon")
+  reason?: string; 
 }
 
 export interface CharacterStats {
@@ -25,10 +25,10 @@ export interface CharacterStats {
   maxHp: number;
   mp: number;
   maxMp: number;
-  skillPoints: number; // New: Currency for learning skills
+  // skillPoints removed
   attributes: Record<string, number>; 
   skills: string[]; // List of learned skill names
-  potentialSkills: Skill[]; // New: Skills available to learn
+  // potentialSkills removed
   inventory: string[];
   statusEffects: string[];
   background: string;
@@ -52,15 +52,15 @@ export interface GameState {
   selectedModel: string;
   models: OpenRouterModel[];
   customStyle: string;
-  isStyleActive: boolean; // New: Toggle for custom style
-  isJailbreakActive: boolean; // New: Toggle for NSFW/Jailbreak
+  isStyleActive: boolean; 
+  isJailbreakActive: boolean; 
   difficulty: Difficulty; 
   
   // App Logic
   viewMode: ViewMode;
   showSettings: boolean;
-  showSkillTree: boolean; // New: Toggle for Skill Tree Modal
-  showStyleEditor: boolean; // New: Toggle for Style Editor Modal
+  // showSkillTree removed
+  showStyleEditor: boolean; 
   isGameStarted: boolean; 
   
   // Game Data
@@ -86,10 +86,8 @@ export const DEFAULT_CHARACTER: CharacterStats = {
   maxHp: 100,
   mp: 50,
   maxMp: 50,
-  skillPoints: 0,
   attributes: {},
   skills: [],
-  potentialSkills: [],
   inventory: [],
   statusEffects: [],
   background: "尚未設定"

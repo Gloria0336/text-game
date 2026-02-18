@@ -5,8 +5,7 @@ import {
   Message, 
   DEFAULT_CHARACTER,
   DEFAULT_WORLD,
-  Difficulty,
-  Skill
+  Difficulty
 } from './types';
 import { INITIAL_STYLE_BOOK } from './constants';
 import { fetchModels, generateCompletion } from './services/openRouterService';
@@ -48,7 +47,8 @@ const Icon = ({ name, className = "w-5 h-5" }: { name: string, className?: strin
     book: <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />,
     edit: <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.69 1.04l-3.296 1.311a.5.5 0 01-.65-.65l1.311-3.297a4.5 4.5 0 011.04-1.697l10.582-10.582zM2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />,
     plus: <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />,
-    login: <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
+    login: <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />,
+    menu: <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
   }
   return (
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={className}>
@@ -124,7 +124,6 @@ const createInitialState = (): GameState => ({
   difficulty: 'Normal',
   viewMode: 'GM', 
   showSettings: true,
-  showSkillTree: false,
   showStyleEditor: false,
   isGameStarted: false,
   world: DEFAULT_WORLD,
@@ -177,6 +176,16 @@ const App: React.FC = () => {
   const historyEndRef = useRef<HTMLDivElement>(null);
   const rpScrollEndRef = useRef<HTMLDivElement>(null);
   const modelListRef = useRef<HTMLDivElement>(null);
+
+  // Helper for mobile detection
+  const isMobileDevice = () => {
+    // Check standard mobile user agents
+    const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    // Check for iPadOS 13+ desktop mode (MacIntel + Touch)
+    const isIPadOS = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+    
+    return isMobileUA || isIPadOS;
+  };
 
   // --- Effects: Load Profiles ---
   useEffect(() => {
@@ -464,7 +473,6 @@ const App: React.FC = () => {
         "character": {
           "name": "角色名", "race": "種族", "class": "職業", "level": 1,
           "hp": 100, "maxHp": 100, "mp": 50, "maxMp": 50,
-          "skillPoints": 1,
           "attributes": { "力量": 10, "敏捷": 10, "智力": 10, "體質": 10 },
           "skills": ["技能1"], "inventory": ["基礎物品"], "background": "完整的背景故事"
         }
@@ -582,78 +590,6 @@ PC Shift: 無`
     }
   };
 
-  // --- Logic: Skill System ---
-  const handleGenerateSkills = async () => {
-    if (gameState.isLoading) return;
-    updateState({ isLoading: true, error: null });
-    setLoadingStep('正在感悟冒險經歷... (生成技能中)');
-
-    try {
-      const skillPrompt = `
-        你是一個 TRPG 技能系統設計師。
-        [角色] ${gameState.character.name} (${gameState.character.class}, Level ${gameState.character.level})
-        [當前狀態] 已有技能: ${gameState.character.skills.join(', ')}
-        [經歷摘要] ${gameState.summary}
-
-        請根據角色的「職業」與最近的「經歷摘要」，設計 3 個角色可以學習的新技能。
-        每個技能必須與過去的經歷有關聯 (Reason)。
-        
-        請嚴格輸出以下 JSON 格式：
-        {
-          "skills": [
-             {
-               "name": "技能名稱",
-               "description": "技能效果描述",
-               "cost": 1,
-               "type": "Active" 或 "Passive",
-               "reason": "為什麼現在能學習這個技能？(例如：因為在與火龍的戰鬥中倖存...)"
-             }
-          ]
-        }
-      `;
-
-      const jsonStr = await generateCompletion(
-        gameState.apiKey,
-        gameState.selectedModel,
-        [{ role: 'system', content: skillPrompt }],
-        0.5,
-        'json_object'
-      );
-
-      let cleanJson = jsonStr.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-      cleanJson = cleanJson.replace(/```json|```/g, '').trim();
-      const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
-      
-      if (jsonMatch) {
-         const data = JSON.parse(jsonMatch[0]);
-         if (data.skills && Array.isArray(data.skills)) {
-             updateState({ 
-                 character: {
-                     ...gameState.character,
-                     potentialSkills: data.skills
-                 },
-                 isLoading: false
-             });
-         }
-      }
-      setLoadingStep('');
-    } catch (err) {
-      handleError(err);
-    }
-  };
-
-  const handleLearnSkill = (skill: Skill) => {
-    if (gameState.character.skillPoints < skill.cost) return;
-    
-    const newChar = { ...gameState.character };
-    newChar.skillPoints -= skill.cost;
-    newChar.skills.push(skill.name);
-    // Remove the learned skill from potentials
-    newChar.potentialSkills = newChar.potentialSkills.filter(s => s.name !== skill.name);
-
-    updateState({ character: newChar });
-  };
-
 
   // --- Logic: RP Mode (Game Loop) ---
   const handleSendRPMessage = async () => {
@@ -743,7 +679,7 @@ PC Shift: 無`
         5. **建議行動**：在劇情描述結束後，請列出兩個建議。
 
         6. **狀態更新**：每次回應的結尾，你 *必須* 附上一個 JSON 區塊來更新遊戲狀態。
-           - 如果玩家經歷了艱難的戰鬥、解開了重大謎題或推動了劇情，請在 "skill_points" 中給予 1 點技能點。
+           - **有機成長系統 (Organic Growth)**: 當玩家在劇情中經歷了深刻的鍛鍊、領悟、或是戰勝強敵後，你可以直接賦予角色新的技能，或升級現有技能。請將新技能名稱直接加入 "add_skills" 陣列中 (例如 ["火焰球 Lv2", "劍術精通"])。
            - "summary" 欄位必須嚴格遵守以下格式 (使用 \\n 換行)：
              📖 STORY STATE
              Active Threads: [當前活躍的劇情線]
@@ -758,7 +694,6 @@ PC Shift: 無`
            {
              "hp_change": 0, 
              "mp_change": 0,
-             "skill_points": 0,
              "add_inventory": [],
              "add_skills": [],
              "summary": "📖 STORY STATE\\nActive Threads: ...\\nNPC States: ...\\nPlanted Payoffs: ...\\nWorld Lock: ...\\nArc Position: ...\\nPC Shift: ..."
@@ -811,7 +746,6 @@ PC Shift: 無`
           const newChar = { ...gameState.character };
           if (updateData.hp_change) newChar.hp = Math.min(newChar.maxHp, Math.max(0, newChar.hp + updateData.hp_change));
           if (updateData.mp_change) newChar.mp = Math.min(newChar.maxMp, Math.max(0, newChar.mp + updateData.mp_change));
-          if (updateData.skill_points) newChar.skillPoints += updateData.skill_points;
           
           if (updateData.add_inventory && Array.isArray(updateData.add_inventory)) {
              updateData.add_inventory.forEach((i: string) => newChar.inventory.push(i));
@@ -958,123 +892,6 @@ PC Shift: 無`
              </Button>
           </div>
        </div>
-    </div>
-  );
-
-  const renderSkillTreeModal = () => (
-    <div className="fixed inset-0 bg-black/90 z-[130] flex items-center justify-center p-4 animate-fade-in font-sans">
-      <div className="bg-rpg-800 w-full max-w-4xl rounded-3xl shadow-2xl border border-rpg-600 flex flex-col max-h-[90vh] overflow-hidden">
-        {/* Header */}
-        <div className="p-6 border-b border-rpg-700 flex justify-between items-center bg-rpg-900/50">
-          <div className="flex items-center gap-3">
-             <div className="bg-rpg-accent/10 p-3 rounded-xl text-rpg-accent">
-               <Icon name="tree" className="w-6 h-6" />
-             </div>
-             <div>
-               <h3 className="text-2xl font-bold text-white">技能與成長</h3>
-               <p className="text-xs text-rpg-muted">透過冒險經歷領悟新的能力</p>
-             </div>
-          </div>
-          <button onClick={() => updateState({ showSkillTree: false })} className="text-rpg-muted hover:text-white transition-colors">
-            <Icon name="x" className="w-8 h-8" />
-          </button>
-        </div>
-        
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-             
-             {/* Left Column: Status & Learned */}
-             <div className="space-y-6">
-                <div className="bg-gradient-to-r from-amber-900/40 to-rpg-800 p-6 rounded-2xl border border-amber-700/30 flex justify-between items-center">
-                   <div>
-                     <div className="text-[10px] text-amber-500 uppercase tracking-widest font-bold mb-1">Available Skill Points</div>
-                     <div className="text-4xl font-black text-white">{gameState.character.skillPoints} <span className="text-sm text-rpg-muted font-normal">SP</span></div>
-                   </div>
-                   <Icon name="lightning" className="w-12 h-12 text-amber-500/20" />
-                </div>
-
-                <div>
-                   <h4 className="text-sm font-bold text-rpg-muted uppercase tracking-widest mb-4 flex items-center gap-2">
-                     <span className="w-2 h-2 bg-rpg-success rounded-full"></span> 已習得技能 (Learned)
-                   </h4>
-                   <div className="space-y-3">
-                     {gameState.character.skills.map((skillName, idx) => (
-                       <div key={idx} className="bg-rpg-900/50 p-4 rounded-xl border border-rpg-700 flex items-center gap-3">
-                          <div className="bg-rpg-700 p-2 rounded-lg"><Icon name="lightning" className="w-4 h-4 text-rpg-success" /></div>
-                          <span className="font-bold text-gray-200">{skillName}</span>
-                       </div>
-                     ))}
-                     {gameState.character.skills.length === 0 && (
-                       <div className="text-center py-8 text-rpg-muted italic border border-dashed border-rpg-700 rounded-xl">
-                         尚未習得任何特殊技能
-                       </div>
-                     )}
-                   </div>
-                </div>
-             </div>
-
-             {/* Right Column: Potential Skills */}
-             <div className="bg-black/20 rounded-3xl p-6 border border-white/5">
-                <div className="flex justify-between items-end mb-6">
-                   <h4 className="text-sm font-bold text-rpg-muted uppercase tracking-widest flex items-center gap-2">
-                     <span className="w-2 h-2 bg-rpg-accent rounded-full animate-pulse"></span> 潛在領悟 (Potentials)
-                   </h4>
-                   <Button size="sm" variant="ghost" className="text-xs" onClick={() => updateState({ character: { ...gameState.character, potentialSkills: [] } })}>清空列表</Button>
-                </div>
-
-                <div className="space-y-4 min-h-[300px]">
-                   {gameState.character.potentialSkills.length > 0 ? (
-                     gameState.character.potentialSkills.map((skill, idx) => (
-                       <div key={idx} className="bg-rpg-800 border border-rpg-600 p-4 rounded-xl hover:border-rpg-accent transition-colors group relative overflow-hidden">
-                          <div className="flex justify-between items-start mb-2">
-                             <div className="font-bold text-lg text-white group-hover:text-rpg-accent transition-colors">{skill.name}</div>
-                             <div className="text-xs bg-black/40 px-2 py-1 rounded text-rpg-muted border border-white/5">{skill.type}</div>
-                          </div>
-                          <p className="text-xs text-gray-400 mb-3 leading-relaxed">{skill.description}</p>
-                          <div className="text-[10px] text-rpg-muted italic mb-4 border-l-2 border-rpg-600 pl-2">
-                             "{skill.reason}"
-                          </div>
-                          
-                          <div className="flex justify-between items-center mt-2">
-                             <div className="text-sm font-bold text-amber-500">Cost: {skill.cost} SP</div>
-                             <Button 
-                               size="sm" 
-                               disabled={gameState.character.skillPoints < skill.cost}
-                               onClick={() => handleLearnSkill(skill)}
-                               className={gameState.character.skillPoints >= skill.cost ? 'bg-rpg-accent text-rpg-900' : 'opacity-50'}
-                             >
-                               習得
-                             </Button>
-                          </div>
-                       </div>
-                     ))
-                   ) : (
-                     <div className="h-full flex flex-col items-center justify-center text-center space-y-4 p-8 opacity-60">
-                        <Icon name="dot" className="w-12 h-12 text-rpg-muted" />
-                        <p className="text-sm text-rpg-muted">暫無可領悟的技能。<br/>試著冥想，回顧你的冒險經歷。</p>
-                     </div>
-                   )}
-                </div>
-
-                <div className="mt-6 pt-6 border-t border-white/5">
-                   <Button 
-                     className="w-full py-4 text-lg font-bold shadow-xl" 
-                     onClick={handleGenerateSkills} 
-                     isLoading={gameState.isLoading}
-                     disabled={gameState.isLoading}
-                   >
-                     <span className="flex items-center gap-2">
-                        <Icon name="search" className="w-5 h-5" /> 進行冥想 (Meditate)
-                     </span>
-                   </Button>
-                   <p className="text-[10px] text-center mt-3 text-rpg-muted">GM 將根據您近期的冒險經歷生成新的技能選項。</p>
-                </div>
-             </div>
-
-           </div>
-        </div>
-      </div>
     </div>
   );
 
@@ -1319,7 +1136,6 @@ PC Shift: 無`
   return (
     <div className="h-screen w-screen bg-rpg-900 text-rpg-text font-sans flex overflow-hidden">
       {gameState.showSettings && renderSettingsModal()}
-      {gameState.showSkillTree && renderSkillTreeModal()}
       {gameState.showStyleEditor && renderStyleEditorModal()}
       {showHistory && renderHistoryLog()}
       
@@ -1382,10 +1198,10 @@ PC Shift: 無`
                 <div className="flex gap-3">
                   <textarea 
                     className="flex-1 bg-rpg-900 border border-rpg-700 rounded-2xl p-4 text-rpg-text focus:ring-2 focus:ring-rpg-accent outline-none transition-all placeholder:text-rpg-muted/40 shadow-inner h-16 resize-none custom-scrollbar text-base" 
-                    placeholder="輸入冒險主題或具體想法... (Shift+Enter 換行)" 
+                    placeholder="輸入冒險主題或具體想法... (Enter 換行)"
                     value={inputMessage} 
                     onChange={(e) => setInputMessage(e.target.value)} 
-                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendGMMessage()} 
+                    // onKeyDown removed to prevent send on Enter
                     disabled={gameState.isLoading}
                   />
                   <Button onClick={handleSendGMMessage} isLoading={gameState.isLoading} className="px-8 rounded-2xl h-16">交流</Button>
@@ -1403,8 +1219,8 @@ PC Shift: 無`
                {/* Background Texture Overlay */}
                <div className="absolute inset-0 opacity-10 bg-[url('https://www.transparenttextures.com/patterns/dark-leather.png')] pointer-events-none"></div>
 
-               {/* Header / Top Controls */}
-               <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center z-20 bg-gradient-to-b from-rpg-900/90 to-transparent pointer-events-none">
+               {/* Header / Top Controls - IMPROVED FOR MOBILE */}
+               <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center z-30 bg-gradient-to-b from-rpg-900/95 to-transparent pointer-events-none">
                   <div className="flex gap-2 pointer-events-auto">
                     <button onClick={() => setShowHistory(true)} className="bg-rpg-800/80 hover:bg-rpg-700 backdrop-blur px-5 py-2.5 rounded-full border border-white/10 text-xs text-white/90 transition-all shadow-xl flex items-center gap-2">
                       <Icon name="scroll" className="w-4 h-4" /> 冒險全卷
@@ -1413,12 +1229,20 @@ PC Shift: 無`
                       <Icon name="edit" className="w-4 h-4" />
                     </button>
                   </div>
-                  <div className="text-rpg-muted text-xs font-mono opacity-50">{gameState.world.name} — Turn {gameState.turnCount}</div>
+                  
+                  {/* Top Right Controls (Replaces Floating Sidebar) */}
+                  <div className="flex gap-2 pointer-events-auto">
+                    <button onClick={() => setShowSidebar(true)} className="bg-rpg-accent hover:bg-cyan-400 text-rpg-900 font-bold px-4 py-2.5 rounded-full border border-white/10 text-xs transition-all shadow-xl flex items-center gap-2">
+                      <Icon name="menu" className="w-4 h-4" /> 選單
+                    </button>
+                  </div>
                </div>
                
                {/* Vertical Chat Container */}
-               <div className="absolute inset-0 pt-16 pb-0 px-4 md:px-0 overflow-y-auto overflow-x-hidden custom-scrollbar flex flex-col">
+               <div className="absolute inset-0 pt-20 pb-0 px-4 md:px-0 overflow-y-auto overflow-x-hidden custom-scrollbar flex flex-col">
                  <div className="flex-1 max-w-4xl mx-auto w-full space-y-8 pb-8">
+                    <div className="text-center text-rpg-muted text-[10px] font-mono opacity-50 mb-4">{gameState.world.name} — Turn {gameState.turnCount}</div>
+                    
                     {gameState.messages.map((msg, i) => {
                       const displayContent = msg.content.replace(/---UPDATE_START---[\s\S]*?---UPDATE_END---/, '').trim();
                       const isLast = i === gameState.messages.length - 1;
@@ -1483,10 +1307,10 @@ PC Shift: 無`
                <div className="max-w-2xl mx-auto flex gap-4">
                  <textarea 
                     className="flex-1 bg-rpg-800/50 border border-rpg-700 rounded-3xl p-5 text-rpg-text h-16 resize-none focus:ring-2 focus:ring-rpg-accent outline-none transition-all placeholder:text-rpg-muted/40 font-sans text-lg custom-scrollbar" 
-                    placeholder="描述你的行動... (Shift+Enter 換行)" 
+                    placeholder="描述你的行動... (Enter 換行)"
                     value={inputMessage} 
                     onChange={(e) => setInputMessage(e.target.value)} 
-                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendRPMessage()} 
+                    // onKeyDown removed to prevent send on Enter
                     disabled={gameState.isLoading}
                  />
                  <Button onClick={handleSendRPMessage} isLoading={gameState.isLoading} className="h-16 px-10 rounded-3xl font-bold text-lg shadow-lg shadow-rpg-accent/10">行動</Button>
@@ -1497,12 +1321,6 @@ PC Shift: 無`
       </div>
 
       {/* Persistent Sidebar */}
-      {!showSidebar && (
-        <button onClick={() => setShowSidebar(true)} className="fixed right-0 top-1/2 -translate-y-1/2 bg-rpg-accent p-3 rounded-l-3xl text-rpg-900 z-40 shadow-2xl hover:translate-x-[-5px] transition-transform font-bold flex flex-col items-center gap-1">
-          <Icon name="user" className="w-6 h-6 mb-1" />
-          <span className="writing-vertical-rl text-[10px] tracking-widest">角色檔案</span>
-        </button>
-      )}
       <div className={`fixed inset-y-0 right-0 w-80 md:w-96 bg-rpg-900 border-l border-rpg-700/50 z-[120] shadow-2xl transform transition-transform duration-500 cubic-bezier(0.4, 0, 0.2, 1) ${showSidebar ? 'translate-x-0' : 'translate-x-full'} p-6 flex flex-col backdrop-blur-md bg-opacity-95`}>
         <div className="flex justify-between items-center mb-6">
           <h3 className="text-xl font-bold text-rpg-accent tracking-widest uppercase italic border-b-2 border-rpg-accent/30 pb-1">Character Sheet</h3>
@@ -1515,8 +1333,8 @@ PC Shift: 無`
           <Button variant={gameState.viewMode === 'GM' ? 'primary' : 'secondary'} className="rounded-xl py-3 shadow-lg" onClick={() => updateState({ viewMode: 'GM' })}>切換至 GM 設計室</Button>
           <div className="flex gap-2">
             <Button variant={gameState.viewMode === 'RP' ? 'primary' : 'secondary'} className="rounded-xl py-3 shadow-lg flex-1" disabled={!gameState.isGameStarted} onClick={() => updateState({ viewMode: 'RP' })}>返回冒險</Button>
-            <Button variant="secondary" disabled={!gameState.isGameStarted} className="rounded-xl py-3 shadow-lg px-4" onClick={() => updateState({ showSkillTree: true })}>
-               <Icon name="tree" className="w-5 h-5" />
+            <Button variant="secondary" className="rounded-xl py-3 shadow-lg px-4" onClick={() => updateState({ showSettings: true })}>
+               <Icon name="settings" className="w-5 h-5" />
             </Button>
           </div>
         </div>
@@ -1561,10 +1379,6 @@ PC Shift: 無`
              <div className="text-[9px] text-rpg-muted uppercase tracking-[0.3em] mb-2 font-bold">Adventurer Dossier</div>
              <div className="text-2xl font-serif text-white mb-1 drop-shadow-md">{gameState.character.name}</div>
              <div className="text-sm text-rpg-accent font-bold tracking-tight">{gameState.character.race} · {gameState.character.class} <span className="text-white/40 ml-2">LEVEL {gameState.character.level}</span></div>
-             <div className="mt-2 text-xs text-amber-500 font-bold border-t border-rpg-600 pt-2 flex justify-between">
-                <span>Skill Points (SP)</span>
-                <span>{gameState.character.skillPoints}</span>
-             </div>
            </div>
 
            <div className="space-y-6">
