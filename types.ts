@@ -16,6 +16,11 @@ export interface Skill {
   reason?: string; 
 }
 
+export interface ChronicleEntry {
+  turn: number;
+  event: string;
+}
+
 export interface CharacterStats {
   name: string;
   race: string;
@@ -66,6 +71,7 @@ export interface GameState {
   // Game Data
   world: WorldSetting;
   character: CharacterStats;
+  chronicle: ChronicleEntry[]; // Timeline events
   
   // Chat Histories
   gmMessages: Message[]; 

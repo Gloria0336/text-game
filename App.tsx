@@ -5,7 +5,8 @@ import {
   Message, 
   DEFAULT_CHARACTER,
   DEFAULT_WORLD,
-  Difficulty
+  Difficulty,
+  ChronicleEntry
 } from './types';
 import { INITIAL_STYLE_BOOK } from './constants';
 import { fetchModels, generateCompletion } from './services/openRouterService';
@@ -128,6 +129,7 @@ const createInitialState = (): GameState => ({
   isGameStarted: false,
   world: DEFAULT_WORLD,
   character: DEFAULT_CHARACTER,
+  chronicle: [], 
   gmMessages: [{ role: 'assistant', content: `你好！我是 Roleplay Game Master。我很樂意為你開啟一段全新的冒险。
 
 在進入正式的角色扮演模式之前，我們需要先在 GM 模式下完成場景的初步設定。請告訴我你對以下幾個方面的想法：
@@ -307,7 +309,7 @@ const App: React.FC = () => {
     if (showHistory) {
       setTimeout(() => historyEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
     }
-  }, [showHistory, gameState.messages]);
+  }, [showHistory, gameState.chronicle]);
 
   // Click outside listener for model dropdown
   useEffect(() => {
@@ -534,6 +536,8 @@ const App: React.FC = () => {
       setLoadingStep('正在填充時空的空白... (生成開場白)');
 
       let newMessages = gameState.messages;
+      let newChronicle = gameState.chronicle;
+
       if (!gameState.isGameStarted || gameState.messages.length === 0) {
         const openingPrompt = `
           [世界] ${newWorld.name}
@@ -566,12 +570,14 @@ const App: React.FC = () => {
           [{ role: 'system', content: openingPrompt }] 
         );
         newMessages = [{ role: 'assistant', content: openingText }];
+        newChronicle = [{ turn: 1, event: "冒險啟程：故事的開始" }];
       }
 
       updateState({
         world: newWorld,
         character: newChar,
         messages: newMessages,
+        chronicle: newChronicle,
         isGameStarted: true,
         viewMode: 'RP',
         isLoading: false,
@@ -680,6 +686,7 @@ PC Shift: 無`
 
         6. **狀態更新**：每次回應的結尾，你 *必須* 附上一個 JSON 區塊來更新遊戲狀態。
            - **有機成長系統 (Organic Growth)**: 當玩家在劇情中經歷了深刻的鍛鍊、領悟、或是戰勝強敵後，你可以直接賦予角色新的技能，或升級現有技能。請將新技能名稱直接加入 "add_skills" 陣列中 (例如 ["火焰球 Lv2", "劍術精通"])。
+           - **大事記更新 (Chronicle Event)**: 如果本回合發生了任何值得紀錄的事件（例如：遇見重要 NPC、發現新地點、戰勝強敵、獲得關鍵道具、或者只是有趣的對話），請在 "chronicle_event" 欄位中提供一個**簡短的標題式描述** (例如 "與神祕老人的初次相遇" 或 "在古堡中發現了隱藏密室")。若無特殊事件，可留空或寫 null。
            - "summary" 欄位必須嚴格遵守以下格式 (使用 \\n 換行)：
              📖 STORY STATE
              Active Threads: [當前活躍的劇情線]
@@ -696,6 +703,7 @@ PC Shift: 無`
              "mp_change": 0,
              "add_inventory": [],
              "add_skills": [],
+             "chronicle_event": "在此填寫本回合的大事記標題",
              "summary": "📖 STORY STATE\\nActive Threads: ...\\nNPC States: ...\\nPlanted Payoffs: ...\\nWorld Lock: ...\\nArc Position: ...\\nPC Shift: ..."
            } 
            ---UPDATE_END---
@@ -738,6 +746,8 @@ PC Shift: 無`
       const updateRegex = /---UPDATE_START---([\s\S]*?)---UPDATE_END---/;
       const matchUpdate = responseContent.match(updateRegex);
 
+      let newChronicle = [...gameState.chronicle];
+
       if (matchUpdate) {
         try {
           const updateData = JSON.parse(matchUpdate[1]);
@@ -756,12 +766,20 @@ PC Shift: 無`
              });
           }
           
+          // Chronicle Update
+          if (updateData.chronicle_event && typeof updateData.chronicle_event === 'string' && updateData.chronicle_event.trim() !== '') {
+             newChronicle.push({
+               turn: gameState.turnCount + 1,
+               event: updateData.chronicle_event
+             });
+          }
+
           let newSummary = gameState.summary;
           if (updateData.summary) {
             newSummary = updateData.summary;
           }
           
-          updateState({ character: newChar, summary: newSummary });
+          updateState({ character: newChar, summary: newSummary, chronicle: newChronicle });
         } catch (e) { 
           console.warn("Update parse fail", e); 
         }
@@ -899,30 +917,33 @@ PC Shift: 無`
     <div className="fixed inset-0 bg-black/95 z-[100] flex flex-col p-6 animate-fade-in font-sans">
       <div className="flex-none flex justify-between items-center mb-6 border-b border-rpg-700 pb-4">
         <div>
-          <h3 className="text-2xl font-bold text-rpg-accent italic">冒險紀錄卷軸</h3>
-          <p className="text-sm text-rpg-muted">此卷軸記載了你在「{gameState.world.name}」的所有足跡</p>
+          <h3 className="text-2xl font-bold text-rpg-accent italic">冒險大事記</h3>
+          <p className="text-sm text-rpg-muted">記載了「{gameState.world.name}」的時間軸與重要事件</p>
         </div>
         <button onClick={() => setShowHistory(false)} className="bg-rpg-accent text-rpg-900 font-bold px-6 py-2 rounded-full hover:bg-cyan-400 transition-colors">收起卷軸</button>
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto space-y-6 pr-4 custom-scrollbar scroll-smooth">
-        {gameState.messages.map((msg, i) => (
-          <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} group`}>
-            <div className={`relative max-w-[85%] p-5 rounded-2xl shadow-lg border ${
-              msg.role === 'user' 
-                ? 'bg-rpg-accent/10 border-rpg-accent/30 text-white' 
-                : 'bg-rpg-800/60 border-rpg-700 text-gray-200'
-            }`}>
-              <div className="text-[10px] uppercase font-bold tracking-widest opacity-40 mb-2">{msg.role === 'user' ? '玩家行動' : 'GM 描述'}</div>
-              {renderMessageContent(msg.content.replace(/---UPDATE_START---[\s\S]*?---UPDATE_END---/, '').trim())}
-              
-              <div className="absolute -top-3 -right-3 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-                 <button onClick={() => handleDeleteMessage(i)} className="bg-rpg-700 hover:bg-red-500 text-white p-1.5 rounded-full shadow-lg border border-rpg-600 transition-colors text-xs flex items-center justify-center w-6 h-6" title="刪除此訊息">
-                   <Icon name="trash" className="w-4 h-4" />
-                 </button>
+      <div className="flex-1 min-h-0 overflow-y-auto space-y-6 pr-4 custom-scrollbar scroll-smooth pl-2">
+        {gameState.chronicle.length > 0 ? (
+          <div className="relative border-l-2 border-rpg-700 ml-3 space-y-8 py-4">
+            {gameState.chronicle.map((entry, i) => (
+              <div key={i} className="relative pl-8 group">
+                {/* Timeline Dot */}
+                <div className="absolute -left-[9px] top-1.5 w-4 h-4 rounded-full bg-rpg-900 border-2 border-rpg-accent group-hover:bg-rpg-accent transition-colors"></div>
+                
+                {/* Content */}
+                <div className="bg-rpg-800/60 p-4 rounded-xl border border-rpg-700/50 hover:bg-rpg-800 hover:border-rpg-600 transition-all">
+                   <div className="text-[10px] text-rpg-muted font-mono mb-1 uppercase tracking-wider">Turn {entry.turn}</div>
+                   <div className="text-lg font-bold text-gray-200 group-hover:text-rpg-accent transition-colors">{entry.event}</div>
+                </div>
               </div>
-            </div>
+            ))}
           </div>
-        ))}
+        ) : (
+          <div className="flex flex-col items-center justify-center h-full text-rpg-muted opacity-50">
+             <Icon name="book" className="w-12 h-12 mb-4" />
+             <p>歷史的篇章尚未展開...</p>
+          </div>
+        )}
         <div ref={historyEndRef} className="h-4" />
       </div>
     </div>
@@ -1223,7 +1244,7 @@ PC Shift: 無`
                <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center z-30 bg-gradient-to-b from-rpg-900/95 to-transparent pointer-events-none">
                   <div className="flex gap-2 pointer-events-auto">
                     <button onClick={() => setShowHistory(true)} className="bg-rpg-800/80 hover:bg-rpg-700 backdrop-blur px-5 py-2.5 rounded-full border border-white/10 text-xs text-white/90 transition-all shadow-xl flex items-center gap-2">
-                      <Icon name="scroll" className="w-4 h-4" /> 冒險全卷
+                      <Icon name="scroll" className="w-4 h-4" /> 冒險大事記
                     </button>
                     <button onClick={() => updateState({ showStyleEditor: true })} className="bg-rpg-800/80 hover:bg-rpg-700 backdrop-blur px-3 py-2.5 rounded-full border border-white/10 text-xs text-white/90 transition-all shadow-xl flex items-center justify-center">
                       <Icon name="edit" className="w-4 h-4" />
