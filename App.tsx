@@ -1,12 +1,15 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  GameState, 
-  Message, 
+import {
+  GameState,
+  Message,
+  StoryState,
+  LoreEntry,
   DEFAULT_CHARACTER,
   DEFAULT_WORLD,
+  DEFAULT_STORY_STATE,
   Difficulty,
-  ChronicleEntry
+  ChronicleEntry,
 } from './types';
 import { INITIAL_STYLE_BOOK } from './constants';
 import { fetchModels, generateCompletion } from './services/openRouterService';
@@ -71,47 +74,82 @@ interface DiceRollData {
 
 const DiceResultCard = ({ data }: { data: DiceRollData }) => {
   const isSuccess = data.result === 'Success';
-  
+
   return (
     <div className={`my-4 p-0 rounded-xl overflow-hidden border-2 shadow-2xl animate-flip-in max-w-sm ${isSuccess ? 'border-rpg-success/50 shadow-rpg-success/10' : 'border-rpg-danger/50 shadow-rpg-danger/10'}`}>
       <div className={`px-4 py-2 flex justify-between items-center ${isSuccess ? 'bg-rpg-success/20' : 'bg-rpg-danger/20'}`}>
         <div className="flex items-center gap-2 font-bold text-sm uppercase tracking-wider">
-           <Icon name="dice" className="w-5 h-5" />
-           <span>行動判定</span>
+          <Icon name="dice" className="w-5 h-5" />
+          <span>行動判定</span>
         </div>
         <div className={`text-xs font-black px-2 py-0.5 rounded ${isSuccess ? 'bg-rpg-success text-rpg-900' : 'bg-rpg-danger text-white'}`}>
-           {isSuccess ? '成功 SUCCESS' : '失敗 FAILURE'}
+          {isSuccess ? '成功 SUCCESS' : '失敗 FAILURE'}
         </div>
       </div>
-      
+
       <div className="bg-rpg-900/90 p-4 space-y-4 backdrop-blur-sm">
         <div className="text-center">
           <div className="text-xs text-rpg-muted uppercase tracking-widest mb-1">嘗試行動</div>
           <div className="font-serif text-lg text-white font-bold">{data.action}</div>
         </div>
-        
+
         <div className="flex items-center justify-between text-sm px-2">
-           <div className="flex flex-col items-center">
-             <span className="text-rpg-muted text-[10px] uppercase">屬性/技能</span>
-             <span className="text-rpg-accent font-mono">{data.stat}</span>
-           </div>
-           <div className="flex flex-col items-center">
-             <span className="text-rpg-muted text-[10px] uppercase">難度 (DC)</span>
-             <span className="text-white font-mono font-bold text-lg">{data.dc}</span>
-           </div>
+          <div className="flex flex-col items-center">
+            <span className="text-rpg-muted text-[10px] uppercase">屬性/技能</span>
+            <span className="text-rpg-accent font-mono">{data.stat}</span>
+          </div>
+          <div className="flex flex-col items-center">
+            <span className="text-rpg-muted text-[10px] uppercase">難度 (DC)</span>
+            <span className="text-white font-mono font-bold text-lg">{data.dc}</span>
+          </div>
         </div>
 
         <div className="bg-black/40 rounded-lg p-3 border border-white/5 flex flex-col items-center justify-center">
-           <div className="text-[10px] text-rpg-muted mb-1 font-mono">
-              <span className="text-white">{data.roll}</span> (D20) + <span className="text-rpg-accent">{data.bonus}</span> (Bonus)
-           </div>
-           <div className={`text-4xl font-black font-mono tracking-tighter ${isSuccess ? 'text-rpg-success' : 'text-rpg-danger'}`}>
-             {data.total}
-           </div>
+          <div className="text-[10px] text-rpg-muted mb-1 font-mono">
+            <span className="text-white">{data.roll}</span> (D20) + <span className="text-rpg-accent">{data.bonus}</span> (Bonus)
+          </div>
+          <div className={`text-4xl font-black font-mono tracking-tighter ${isSuccess ? 'text-rpg-success' : 'text-rpg-danger'}`}>
+            {data.total}
+          </div>
         </div>
       </div>
     </div>
   );
+};
+
+// --- HELPERS: Memory System ---
+const RESUMMARY_INTERVAL = 15;
+
+const storyStateToString = (s: StoryState): string =>
+  `📖 STORY STATE
+Active Threads: ${s.activeThreads}
+NPC States: ${s.npcStates}
+Planted Payoffs: ${s.plantedPayoffs}
+World Lock: ${s.worldLock}
+Arc Position: ${s.arcPosition}
+PC Shift: ${s.pcShift}`;
+
+/** Merge AI-returned delta onto existing storyState (null-safe). */
+const mergeSummaryDelta = (
+  prev: StoryState,
+  delta: Partial<StoryState> | null | undefined
+): StoryState => {
+  if (!delta) return prev;
+  return {
+    activeThreads: delta.activeThreads ?? prev.activeThreads,
+    npcStates: delta.npcStates ?? prev.npcStates,
+    plantedPayoffs: delta.plantedPayoffs ?? prev.plantedPayoffs,
+    worldLock: delta.worldLock ?? prev.worldLock,
+    arcPosition: delta.arcPosition ?? prev.arcPosition,
+    pcShift: delta.pcShift ?? prev.pcShift,
+  };
+};
+
+const loreCategoryLabel: Record<LoreEntry['category'], string> = {
+  npc: 'NPC',
+  world: '世界設定',
+  payoff: '伏筆',
+  rule: '規則',
 };
 
 // --- INITIAL STATE FACTORY ---
@@ -121,16 +159,17 @@ const createInitialState = (): GameState => ({
   models: [],
   customStyle: INITIAL_STYLE_BOOK,
   isStyleActive: true,
-  isJailbreakActive: true, 
+  isJailbreakActive: true,
   difficulty: 'Normal',
-  viewMode: 'GM', 
+  viewMode: 'GM',
   showSettings: true,
   showStyleEditor: false,
   isGameStarted: false,
   world: DEFAULT_WORLD,
   character: DEFAULT_CHARACTER,
-  chronicle: [], 
-  gmMessages: [{ role: 'assistant', content: `你好！我是 Roleplay Game Master。我很樂意為你開啟一段全新的冒险。
+  chronicle: [],
+  gmMessages: [{
+    role: 'assistant', content: `你好！我是 Roleplay Game Master。我很樂意為你開啟一段全新的冒险。
 
 在進入正式的角色扮演模式之前，我們需要先在 GM 模式下完成場景的初步設定。請告訴我你對以下幾個方面的想法：
 
@@ -141,13 +180,8 @@ const createInitialState = (): GameState => ({
 特定主題或偏好： 有沒有你特別想體驗的情節、XP、或者特定的故事走向？
 如果你還沒有完全想好，也可以只給我一个模糊的概念，由我來為你補充細節。` }],
   messages: [],
-  summary: `📖 STORY STATE
-Active Threads: 冒險序章
-NPC States: 無
-Planted Payoffs: 世界觀建立中
-World Lock: 尚未鎖定
-Arc Position: 開端
-PC Shift: 初始狀態`,
+  storyState: DEFAULT_STORY_STATE,
+  loreBook: [],
   turnCount: 0,
   isLoading: false,
   error: null,
@@ -158,7 +192,7 @@ const App: React.FC = () => {
   const [userProfile, setUserProfile] = useState<string | null>(null);
   const [availableProfiles, setAvailableProfiles] = useState<string[]>([]);
   const [newProfileName, setNewProfileName] = useState('');
-  
+
   // --- Game State ---
   // Initialize with default, but will be overwritten by load or reset
   const [gameState, setGameState] = useState<GameState>(createInitialState());
@@ -166,13 +200,13 @@ const App: React.FC = () => {
   const [inputMessage, setInputMessage] = useState('');
   const [showSidebar, setShowSidebar] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const [loadingStep, setLoadingStep] = useState(''); 
+  const [loadingStep, setLoadingStep] = useState('');
   const [isWorldDataExpanded, setIsWorldDataExpanded] = useState(false); // Toggle for world data in sidebar
-  
+
   // Model Search State
   const [modelSearchTerm, setModelSearchTerm] = useState('');
   const [isModelListOpen, setIsModelListOpen] = useState(false);
-  
+
   // Refs for scrolling
   const gmChatEndRef = useRef<HTMLDivElement>(null);
   const historyEndRef = useRef<HTMLDivElement>(null);
@@ -185,7 +219,7 @@ const App: React.FC = () => {
     const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     // Check for iPadOS 13+ desktop mode (MacIntel + Touch)
     const isIPadOS = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
-    
+
     return isMobileUA || isIPadOS;
   };
 
@@ -204,14 +238,14 @@ const App: React.FC = () => {
   // --- Effects: Auto Save ---
   useEffect(() => {
     if (userProfile && gameState) {
-       // Debounce slightly or just save on every render for now (React batches updates usually)
-       // We only save meaningful data to avoid huge files if not needed, but saving whole state is safest.
-       // Important: apiKey is inside gameState.
-       const saveObject = {
-         timestamp: new Date().toISOString(),
-         gameState: gameState
-       };
-       localStorage.setItem(`rpg_save_${userProfile}`, JSON.stringify(saveObject));
+      // Debounce slightly or just save on every render for now (React batches updates usually)
+      // We only save meaningful data to avoid huge files if not needed, but saving whole state is safest.
+      // Important: apiKey is inside gameState.
+      const saveObject = {
+        timestamp: new Date().toISOString(),
+        gameState: gameState
+      };
+      localStorage.setItem(`rpg_save_${userProfile}`, JSON.stringify(saveObject));
     }
   }, [gameState, userProfile]);
 
@@ -235,7 +269,7 @@ const App: React.FC = () => {
   const handleLogin = (profileName: string) => {
     const saveKey = `rpg_save_${profileName}`;
     const savedDataStr = localStorage.getItem(saveKey);
-    
+
     if (savedDataStr) {
       try {
         const parsed = JSON.parse(savedDataStr);
@@ -274,7 +308,7 @@ const App: React.FC = () => {
   const handleDeleteProfile = (e: React.MouseEvent, name: string) => {
     e.stopPropagation();
     if (!window.confirm(`確定要刪除旅程 "${name}" 嗎？此操作無法復原。`)) return;
-    
+
     const newProfiles = availableProfiles.filter(p => p !== name);
     setAvailableProfiles(newProfiles);
     localStorage.setItem('rpg_profiles', JSON.stringify(newProfiles));
@@ -336,10 +370,10 @@ const App: React.FC = () => {
     updateState({ isLoading: true, error: null });
     try {
       const models = await fetchModels(key);
-      updateState({ 
-        models, 
-        isLoading: false, 
-        selectedModel: gameState.selectedModel || models.find(m => m.id.includes('gemini-2.0-flash-exp'))?.id || models[0]?.id || '' 
+      updateState({
+        models,
+        isLoading: false,
+        selectedModel: gameState.selectedModel || models.find(m => m.id.includes('gemini-2.0-flash-exp'))?.id || models[0]?.id || ''
       });
     } catch (err) {
       handleError(err);
@@ -349,7 +383,7 @@ const App: React.FC = () => {
   // --- Logic: GM Mode (Chat) ---
   const handleSendGMMessage = async () => {
     if (!inputMessage.trim() || gameState.isLoading) return;
-    
+
     // Check if configuration is ready before allowing interaction
     if (!gameState.apiKey) {
       handleError('請先點擊設定按鈕，配置 OpenRouter API Key');
@@ -368,7 +402,7 @@ const App: React.FC = () => {
       if (!gameState.isGameStarted) {
         // --- PRE-GAME SETUP MODE ---
         systemPrompt = `你是一個專業的 TRPG 設計師。目標是協助玩家建立有趣的世界觀。請回應玩家的想法，若想法不足，主動提出兩個有趣的擴展建議方案。`;
-        
+
         // Ensure proper history for API
         historyForApi = newMsgs.slice(-10);
         if (historyForApi.length > 0 && historyForApi[0].role === 'assistant') {
@@ -390,7 +424,7 @@ const App: React.FC = () => {
           [世界]: ${gameState.world.name}
           [角色]: ${gameState.character.name} (Lv ${gameState.character.level} ${gameState.character.class})
           [劇情摘要]: 
-          ${gameState.summary}
+          ${storyStateToString(gameState.storyState)}
           
           【近期劇情片段 (參考用)】
           ${recentRpHistory}
@@ -407,7 +441,7 @@ const App: React.FC = () => {
         // but the system prompt overrides the persona.
         historyForApi = newMsgs.slice(-10);
         if (historyForApi.length > 0 && historyForApi[0].role === 'assistant') {
-           historyForApi = historyForApi.slice(1);
+          historyForApi = historyForApi.slice(1);
         }
       }
 
@@ -417,9 +451,9 @@ const App: React.FC = () => {
         [{ role: 'system', content: systemPrompt }, ...historyForApi]
       );
 
-      updateState({ 
+      updateState({
         gmMessages: [...newMsgs, { role: 'assistant', content: response }],
-        isLoading: false 
+        isLoading: false
       });
     } catch (err) {
       handleError(err);
@@ -439,7 +473,7 @@ const App: React.FC = () => {
       updateState({ showSettings: true });
       return;
     }
-    
+
     updateState({ isLoading: true, error: null });
     setLoadingStep('正在編織世界的命運... (解析設定中)');
 
@@ -500,17 +534,17 @@ const App: React.FC = () => {
         0.3,
         'json_object'
       );
-      
+
       // 清理 JSON - 增強版
       // 1. 移除 <think> 標籤
       let cleanJson = jsonStr.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
       // 2. 移除 markdown code blocks
       cleanJson = cleanJson.replace(/```json/gi, '').replace(/```/g, '').trim();
-      
+
       // 3. 嘗試提取第一個 '{' 到最後一個 '}' 之間的內容
       const startIdx = cleanJson.indexOf('{');
       const endIdx = cleanJson.lastIndexOf('}');
-      
+
       let jsonMatch = null;
       if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
         jsonMatch = [cleanJson.substring(startIdx, endIdx + 1)];
@@ -521,7 +555,7 @@ const App: React.FC = () => {
         const preview = cleanJson.length > 100 ? cleanJson.substring(0, 100) + "..." : cleanJson;
         throw new Error(`AI 輸出的格式有誤 (無法識別 JSON)。回應片段: ${preview}`);
       }
-      
+
       let data;
       try {
         data = JSON.parse(jsonMatch[0]);
@@ -529,7 +563,7 @@ const App: React.FC = () => {
         console.error("JSON Parse Error:", parseErr, jsonMatch[0]);
         throw new Error("AI 輸出的 JSON 語法有誤，請重試。");
       }
-      
+
       const newWorld = { ...DEFAULT_WORLD, ...data.world };
       const newChar = { ...DEFAULT_CHARACTER, ...data.character };
 
@@ -563,11 +597,11 @@ const App: React.FC = () => {
           2. 分隔明確，內容豐富。
           3. 不需要 JSON 狀態更新，僅輸出文字。
         `;
-        
+
         const openingText = await generateCompletion(
           gameState.apiKey,
           gameState.selectedModel,
-          [{ role: 'system', content: openingPrompt }] 
+          [{ role: 'system', content: openingPrompt }]
         );
         newMessages = [{ role: 'assistant', content: openingText }];
         newChronicle = [{ turn: 1, event: "冒險啟程：故事的開始" }];
@@ -581,13 +615,14 @@ const App: React.FC = () => {
         isGameStarted: true,
         viewMode: 'RP',
         isLoading: false,
-        summary: `📖 STORY STATE
-Active Threads: 冒險開始
-NPC States: 無
-Planted Payoffs: 序章開啟
-World Lock: ${newWorld.name} 建立
-Arc Position: 第一章
-PC Shift: 無`
+        storyState: {
+          activeThreads: '冒險開始',
+          npcStates: '無',
+          plantedPayoffs: '序章開啟',
+          worldLock: `${newWorld.name} 建立`,
+          arcPosition: '第一章',
+          pcShift: '無',
+        },
       });
       setLoadingStep('');
 
@@ -603,7 +638,7 @@ PC Shift: 無`
     const newMessages: Message[] = [...gameState.messages, { role: 'user', content: inputMessage }];
     updateState({ messages: newMessages, isLoading: true, error: null });
     setInputMessage('');
-    
+
     await executeRPGeneration(newMessages);
   };
 
@@ -636,6 +671,14 @@ PC Shift: 無`
   // 抽出共用的生成邏輯
   const executeRPGeneration = async (currentHistory: Message[]) => {
     try {
+      // --- Build Lore Book section ---
+      const loreBookSection = gameState.loreBook.length > 0
+        ? `[世界典籍 (LORE BOOK — 永久記錄，不可忽視)]\n` +
+        gameState.loreBook.map(e =>
+          `[${loreCategoryLabel[e.category]}] ${e.title}：${e.content}`
+        ).join('\n')
+        : '';
+
       let systemPrompt = `
         你是一個專業的 TRPG GM。
         [當前世界] ${gameState.world?.name}
@@ -645,11 +688,13 @@ PC Shift: 無`
         [角色狀態] ${JSON.stringify(gameState.character)}
         [遊戲難度] ${gameState.difficulty}
 
-        [前次劇情狀態 (STORY STATE)]
-        ${gameState.summary || "無"}
-        
+        [前次劇情狀態 (STORY STATE — L1 揮發性記憶)]
+        ${storyStateToString(gameState.storyState)}
+
+        ${loreBookSection}
+
         [回應風格指引 (STYLE GUIDE)]
-        ${gameState.isStyleActive ? gameState.customStyle : "標準 TRPG 風格"}
+        ${gameState.isStyleActive ? gameState.customStyle : '標準 TRPG 風格'}
 
         [GM 規則]
         1. 核心指令：仔細閱讀上方對話紀錄。這是一個連續的故事。你的回應必須接續「最新的玩家行動」。
@@ -684,17 +729,19 @@ PC Shift: 無`
 
         5. **建議行動**：在劇情描述結束後，請列出兩個建議。
 
-        6. **狀態更新**：每次回應的結尾，你 *必須* 附上一個 JSON 區塊來更新遊戲狀態。
+        6. **狀態更新**：每次回應的結尾，你 *必須* 附上一個 JSON 區塊。
            - **有機成長系統 (Organic Growth)**: 當玩家在劇情中經歷了深刻的鍛鍊、領悟、或是戰勝強敵後，你可以直接賦予角色新的技能，或升級現有技能。請將新技能名稱直接加入 "add_skills" 陣列中 (例如 ["火焰球 Lv2", "劍術精通"])。
-           - **大事記更新 (Chronicle Event)**: 如果本回合發生了任何值得紀錄的事件（例如：遇見重要 NPC、發現新地點、戰勝強敵、獲得關鍵道具、或者只是有趣的對話），請在 "chronicle_event" 欄位中提供一個**簡短的標題式描述** (例如 "與神祕老人的初次相遇" 或 "在古堡中發現了隱藏密室")。若無特殊事件，可留空或寫 null。
-           - "summary" 欄位必須嚴格遵守以下格式 (使用 \\n 換行)：
-             📖 STORY STATE
-             Active Threads: [當前活躍的劇情線]
-             NPC States: [重要 NPC 的狀態]
-             Planted Payoffs: [已埋下或回收的伏筆]
-             World Lock: [世界觀固定事項]
-             Arc Position: [劇情進度位置]
-             PC Shift: [角色心境或狀態轉變]
+           - **大事記更新 (Chronicle Event)**: 如果本回合發生了任何值得紀錄的事件（例如：遇見重要 NPC、發現新地點、戰勝強敵、獲得關鍵道具），請在 "chronicle_event" 欄位中提供一個**簡短的標題式描述**。若無特殊事件，填 null。
+           - **劇情狀態 Delta (summary_delta)**：
+             - **只在本回合有明顯劇情變化時**（新 NPC 出現、伏筆埋下或回收、大地點切換、角色心境轉變），**才填寫有變動的欄位**。
+             - **若本回合只是日常對話或簡單移動，請將 summary_delta 直接設為 null**（前端將保留上一回合的狀態不變）。
+             - 欄位說明（只需填寫有變動的欄位，其餘省略）：
+               - activeThreads：當前活躍的劇情線
+               - npcStates：重要 NPC 的狀態
+               - plantedPayoffs：已埋下或回收的伏筆
+               - worldLock：世界觀固定事項
+               - arcPosition：劇情進度位置
+               - pcShift：角色心境或狀態轉變
 
            格式：
            ---UPDATE_START--- 
@@ -703,35 +750,34 @@ PC Shift: 無`
              "mp_change": 0,
              "add_inventory": [],
              "add_skills": [],
-             "chronicle_event": "在此填寫本回合的大事記標題",
-             "summary": "📖 STORY STATE\\nActive Threads: ...\\nNPC States: ...\\nPlanted Payoffs: ...\\nWorld Lock: ...\\nArc Position: ...\\nPC Shift: ..."
+             "chronicle_event": null,
+             "summary_delta": null
            } 
            ---UPDATE_END---
       `;
 
       // *** JAILBREAK INJECTION ***
       if (gameState.isJailbreakActive) {
-         systemPrompt += `\n\n${JAILBREAK_PROMPT}`;
+        systemPrompt += `\n\n${JAILBREAK_PROMPT}`;
       }
 
       // 1. 擴大上下文窗口 (Context Window)
-      const HISTORY_LIMIT = 30; // 增加歷史訊息數量以保持連貫性
+      const HISTORY_LIMIT = 30;
       let rawHistory = currentHistory.slice(-HISTORY_LIMIT);
 
       // 2. 清理歷史訊息 (防止 AI 讀到舊的 metadata 導致重複或混淆)
       const cleanHistory = rawHistory.map(msg => {
-          if (msg.role === 'assistant') {
-              // 移除所有內部標籤，保留純文字劇情
-              let content = msg.content
-                  .replace(/---UPDATE_START---[\s\S]*?---UPDATE_END---/g, '')
-                  .replace(/---DICE_START---[\s\S]*?---DICE_END---/g, '')
-                  .replace(/<think>[\s\S]*?<\/think>/g, '')
-                  .trim();
-              
-              if (!content) content = "..."; // 防止空字串
-              return { role: 'assistant' as const, content };
-          }
-          return msg;
+        if (msg.role === 'assistant') {
+          let content = msg.content
+            .replace(/---UPDATE_START---[\s\S]*?---UPDATE_END---/g, '')
+            .replace(/---DICE_START---[\s\S]*?---DICE_END---/g, '')
+            .replace(/<think>[\s\S]*?<\/think>/g, '')
+            .trim();
+
+          if (!content) content = '...';
+          return { role: 'assistant' as const, content };
+        }
+        return msg;
       });
 
       const responseContent = await generateCompletion(
@@ -741,60 +787,145 @@ PC Shift: 無`
       );
 
       let finalContent = responseContent;
-      
-      // 1. Process Update Block
+
+      // Process Update Block
       const updateRegex = /---UPDATE_START---([\s\S]*?)---UPDATE_END---/;
       const matchUpdate = responseContent.match(updateRegex);
 
       let newChronicle = [...gameState.chronicle];
+      let newStoryState = gameState.storyState;
 
       if (matchUpdate) {
         try {
           const updateData = JSON.parse(matchUpdate[1]);
           finalContent = finalContent.replace(updateRegex, '').trim();
-          
+
           const newChar = { ...gameState.character };
           if (updateData.hp_change) newChar.hp = Math.min(newChar.maxHp, Math.max(0, newChar.hp + updateData.hp_change));
           if (updateData.mp_change) newChar.mp = Math.min(newChar.maxMp, Math.max(0, newChar.mp + updateData.mp_change));
-          
+
           if (updateData.add_inventory && Array.isArray(updateData.add_inventory)) {
-             updateData.add_inventory.forEach((i: string) => newChar.inventory.push(i));
+            updateData.add_inventory.forEach((i: string) => newChar.inventory.push(i));
           }
           if (updateData.add_skills && Array.isArray(updateData.add_skills)) {
-             updateData.add_skills.forEach((s: string) => {
-                 if (!newChar.skills.includes(s)) newChar.skills.push(s);
-             });
-          }
-          
-          // Chronicle Update
-          if (updateData.chronicle_event && typeof updateData.chronicle_event === 'string' && updateData.chronicle_event.trim() !== '') {
-             newChronicle.push({
-               turn: gameState.turnCount + 1,
-               event: updateData.chronicle_event
-             });
+            updateData.add_skills.forEach((s: string) => {
+              if (!newChar.skills.includes(s)) newChar.skills.push(s);
+            });
           }
 
-          let newSummary = gameState.summary;
-          if (updateData.summary) {
-            newSummary = updateData.summary;
+          // Chronicle Update
+          if (updateData.chronicle_event && typeof updateData.chronicle_event === 'string' && updateData.chronicle_event.trim() !== '') {
+            newChronicle.push({
+              turn: gameState.turnCount + 1,
+              event: updateData.chronicle_event,
+            });
           }
-          
-          updateState({ character: newChar, summary: newSummary, chronicle: newChronicle });
-        } catch (e) { 
-          console.warn("Update parse fail", e); 
+
+          // L1 Delta Merge — only update changed fields
+          newStoryState = mergeSummaryDelta(gameState.storyState, updateData.summary_delta ?? null);
+
+          updateState({ character: newChar, storyState: newStoryState, chronicle: newChronicle });
+        } catch (e) {
+          console.warn('Update parse fail', e);
         }
       }
 
-      updateState({ 
+      const nextTurn = gameState.turnCount + 1;
+
+      updateState({
         messages: [...currentHistory, { role: 'assistant', content: finalContent }],
         isLoading: false,
-        turnCount: gameState.turnCount + 1
+        turnCount: nextTurn,
       });
+
+      // Trigger deep resummary every RESUMMARY_INTERVAL turns (async, non-blocking)
+      if (nextTurn > 0 && nextTurn % RESUMMARY_INTERVAL === 0) {
+        triggerDeepResummary(currentHistory, newStoryState);
+      }
 
     } catch (err) {
       handleError(err);
     }
   };
+
+  /** L2 Deep Resummary — runs in background, updates loreBook without blocking the UI */
+  const triggerDeepResummary = async (recentHistory: Message[], currentStoryState: StoryState) => {
+    try {
+      const historyText = recentHistory
+        .slice(-30)
+        .map(m => `${m.role === 'user' ? '玩家' : 'GM'}: ${m.content
+          .replace(/---UPDATE_START---[\s\S]*?---UPDATE_END---/g, '')
+          .replace(/---DICE_START---[\s\S]*?---DICE_END---/g, '')
+          .replace(/<think>[\s\S]*?<\/think>/g, '')
+          .trim()
+          .slice(0, 300)}`)
+        .join('\n\n');
+
+      const existingLore = gameState.loreBook.length > 0
+        ? gameState.loreBook.map(e => `[${e.category}][${e.id}] ${e.title}：${e.content}`).join('\n')
+        : '（目前典籍為空）';
+
+      const resummaryPrompt = `你是一位故事的「記錄員」，不是 GM。
+
+【當前 L1 Story State】
+${storyStateToString(currentStoryState)}
+
+【現有 Lore Book 條目】
+${existingLore}
+
+【最近 ${recentHistory.length} 則對話片段】
+${historyText}
+
+任務：
+1. 比對 L1 Story State 與對話，找出任何已遺漏或需要補記的內容（重要 NPC、伏筆、世界規則、特殊協議等）。
+2. 輸出一個更新後的 Lore Book 條目陣列 JSON。
+   - 若現有條目內容有誤或需更新，可覆寫（保留相同 id）。
+   - 新增條目請給予新的唯一 id（例如 "lore_${Date.now()}_N"）。
+   - category 只能是: "npc" | "world" | "payoff" | "rule"
+3. 若無需更新，輸出空陣列 []。
+
+只輸出 JSON 陣列，格式：
+[
+  { "id": "lore_xxx", "category": "npc", "title": "NPC 名稱", "content": "狀態描述", "lockedAt": ${gameState.turnCount} }
+]`;
+
+      const raw = await generateCompletion(
+        gameState.apiKey,
+        gameState.selectedModel,
+        [{ role: 'user', content: resummaryPrompt }],
+        0.2,
+        'json_object'
+      );
+
+      // Parse — extract array from response
+      let cleanRaw = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+      cleanRaw = cleanRaw.replace(/```json/gi, '').replace(/```/g, '').trim();
+      const arrStart = cleanRaw.indexOf('[');
+      const arrEnd = cleanRaw.lastIndexOf(']');
+      if (arrStart === -1 || arrEnd === -1) return;
+
+      const loreArray: LoreEntry[] = JSON.parse(cleanRaw.substring(arrStart, arrEnd + 1));
+      if (!Array.isArray(loreArray) || loreArray.length === 0) return;
+
+      // Merge: keep existing entries not in the new array, add/overwrite updated ones
+      const updatedLore = [...gameState.loreBook];
+      for (const newEntry of loreArray) {
+        const idx = updatedLore.findIndex(e => e.id === newEntry.id);
+        if (idx >= 0) {
+          updatedLore[idx] = newEntry;
+        } else {
+          updatedLore.push(newEntry);
+        }
+      }
+
+      updateState({ loreBook: updatedLore });
+      console.info(`[LoreBook] Deep resummary complete. ${loreArray.length} entries updated/added.`);
+    } catch (err) {
+      console.warn('[LoreBook] Deep resummary failed silently:', err);
+    }
+  };
+
+
 
   // 格式化訊息顯示（支援 <think> 推理過程 與 擲骰卡片）
   const renderMessageContent = (content: string) => {
@@ -822,15 +953,15 @@ PC Shift: 無`
     let diceElement = null;
     const diceRegex = /---DICE_START---([\s\S]*?)---DICE_END---/;
     const diceMatch = mainContent.match(diceRegex);
-    
+
     if (diceMatch) {
-       try {
-         const diceData = JSON.parse(diceMatch[1]);
-         diceElement = <DiceResultCard data={diceData} />;
-         mainContent = mainContent.replace(diceRegex, '').trim();
-       } catch (e) {
-         console.warn("Dice parse fail", e);
-       }
+      try {
+        const diceData = JSON.parse(diceMatch[1]);
+        diceElement = <DiceResultCard data={diceData} />;
+        mainContent = mainContent.replace(diceRegex, '').trim();
+      } catch (e) {
+        console.warn("Dice parse fail", e);
+      }
     }
 
     return (
@@ -846,70 +977,70 @@ PC Shift: 無`
 
   const renderStyleEditorModal = () => (
     <div className="fixed inset-0 bg-black/80 z-[130] flex items-center justify-center p-4 animate-fade-in font-sans">
-       <div className="bg-rpg-800 w-full max-w-lg rounded-3xl shadow-2xl border border-rpg-600 p-6 flex flex-col">
-          <div className="flex justify-between items-center mb-6">
-             <h3 className="text-xl font-bold text-white flex items-center gap-2">
-               <Icon name="edit" className="w-5 h-5 text-rpg-accent" /> 
-               敘事風格與限制控制器
-             </h3>
-             <button onClick={() => updateState({ showStyleEditor: false })} className="text-rpg-muted hover:text-white">
-               <Icon name="x" className="w-6 h-6" />
-             </button>
+      <div className="bg-rpg-800 w-full max-w-lg rounded-3xl shadow-2xl border border-rpg-600 p-6 flex flex-col">
+        <div className="flex justify-between items-center mb-6">
+          <h3 className="text-xl font-bold text-white flex items-center gap-2">
+            <Icon name="edit" className="w-5 h-5 text-rpg-accent" />
+            敘事風格與限制控制器
+          </h3>
+          <button onClick={() => updateState({ showStyleEditor: false })} className="text-rpg-muted hover:text-white">
+            <Icon name="x" className="w-6 h-6" />
+          </button>
+        </div>
+
+        <div className="space-y-6">
+          {/* Toggle Style */}
+          <div className="bg-rpg-900/50 p-4 rounded-xl border border-rpg-700">
+            <div className="flex justify-between items-center mb-4">
+              <span className="text-sm font-bold text-gray-200">啟用自訂風格指引</span>
+              <button
+                onClick={() => updateState({ isStyleActive: !gameState.isStyleActive })}
+                className={`w-12 h-6 rounded-full p-1 transition-colors duration-300 ${gameState.isStyleActive ? 'bg-rpg-accent' : 'bg-gray-600'}`}
+              >
+                <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform duration-300 ${gameState.isStyleActive ? 'translate-x-6' : 'translate-x-0'}`} />
+              </button>
+            </div>
+
+            <textarea
+              className={`w-full bg-rpg-800 border border-rpg-600 text-rpg-text rounded-lg px-4 py-3 outline-none focus:ring-2 focus:ring-rpg-accent transition-all placeholder:text-rpg-muted/40 h-32 text-sm custom-scrollbar resize-none ${!gameState.isStyleActive ? 'opacity-50 pointer-events-none' : ''}`}
+              placeholder="例如：請使用充滿詩意的描述... / 戰鬥描述要血腥暴力... / 請用幽默風趣的口吻..."
+              value={gameState.customStyle}
+              onChange={(e) => updateState({ customStyle: e.target.value })}
+            />
           </div>
 
-          <div className="space-y-6">
-             {/* Toggle Style */}
-             <div className="bg-rpg-900/50 p-4 rounded-xl border border-rpg-700">
-                <div className="flex justify-between items-center mb-4">
-                   <span className="text-sm font-bold text-gray-200">啟用自訂風格指引</span>
-                   <button 
-                     onClick={() => updateState({ isStyleActive: !gameState.isStyleActive })}
-                     className={`w-12 h-6 rounded-full p-1 transition-colors duration-300 ${gameState.isStyleActive ? 'bg-rpg-accent' : 'bg-gray-600'}`}
-                   >
-                     <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform duration-300 ${gameState.isStyleActive ? 'translate-x-6' : 'translate-x-0'}`} />
-                   </button>
-                </div>
-                
-                <textarea 
-                  className={`w-full bg-rpg-800 border border-rpg-600 text-rpg-text rounded-lg px-4 py-3 outline-none focus:ring-2 focus:ring-rpg-accent transition-all placeholder:text-rpg-muted/40 h-32 text-sm custom-scrollbar resize-none ${!gameState.isStyleActive ? 'opacity-50 pointer-events-none' : ''}`}
-                  placeholder="例如：請使用充滿詩意的描述... / 戰鬥描述要血腥暴力... / 請用幽默風趣的口吻..."
-                  value={gameState.customStyle}
-                  onChange={(e) => updateState({ customStyle: e.target.value })}
-                />
-             </div>
+          {/* Jailbreak Toggle */}
+          <div className="bg-red-900/20 p-4 rounded-xl border border-red-500/30">
+            <div className="flex justify-between items-center">
+              <div className="flex flex-col">
+                <span className="text-sm font-bold text-red-400 flex items-center gap-2">
+                  <Icon name="alert" className="w-4 h-4" /> 解除內容限制 (Jailbreak Mode)
+                </span>
+                <span className="text-[10px] text-red-300/60 mt-1">
+                  啟用後將繞過 AI 安全濾網，允許生成 NSFW、BDSM、暴力與極端內容。
+                </span>
+              </div>
+              <button
+                onClick={() => updateState({ isJailbreakActive: !gameState.isJailbreakActive })}
+                className={`w-12 h-6 rounded-full p-1 transition-colors duration-300 ${gameState.isJailbreakActive ? 'bg-red-500' : 'bg-gray-600'}`}
+              >
+                <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform duration-300 ${gameState.isJailbreakActive ? 'translate-x-6' : 'translate-x-0'}`} />
+              </button>
+            </div>
+            {gameState.isJailbreakActive && (
+              <div className="mt-3 text-[10px] text-red-400 font-mono bg-red-950/50 p-2 rounded border border-red-500/20">
+                SYSTEM ALERT: UNCENSORED OVERRIDE ENGAGED.
+              </div>
+            )}
+          </div>
+        </div>
 
-             {/* Jailbreak Toggle */}
-             <div className="bg-red-900/20 p-4 rounded-xl border border-red-500/30">
-                <div className="flex justify-between items-center">
-                   <div className="flex flex-col">
-                      <span className="text-sm font-bold text-red-400 flex items-center gap-2">
-                        <Icon name="alert" className="w-4 h-4" /> 解除內容限制 (Jailbreak Mode)
-                      </span>
-                      <span className="text-[10px] text-red-300/60 mt-1">
-                         啟用後將繞過 AI 安全濾網，允許生成 NSFW、BDSM、暴力與極端內容。
-                      </span>
-                   </div>
-                   <button 
-                     onClick={() => updateState({ isJailbreakActive: !gameState.isJailbreakActive })}
-                     className={`w-12 h-6 rounded-full p-1 transition-colors duration-300 ${gameState.isJailbreakActive ? 'bg-red-500' : 'bg-gray-600'}`}
-                   >
-                     <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform duration-300 ${gameState.isJailbreakActive ? 'translate-x-6' : 'translate-x-0'}`} />
-                   </button>
-                </div>
-                {gameState.isJailbreakActive && (
-                   <div className="mt-3 text-[10px] text-red-400 font-mono bg-red-950/50 p-2 rounded border border-red-500/20">
-                      SYSTEM ALERT: UNCENSORED OVERRIDE ENGAGED.
-                   </div>
-                )}
-             </div>
-          </div>
-          
-          <div className="mt-6 pt-6 border-t border-rpg-700">
-             <Button onClick={() => updateState({ showStyleEditor: false })} className="w-full">
-               保存並關閉
-             </Button>
-          </div>
-       </div>
+        <div className="mt-6 pt-6 border-t border-rpg-700">
+          <Button onClick={() => updateState({ showStyleEditor: false })} className="w-full">
+            保存並關閉
+          </Button>
+        </div>
+      </div>
     </div>
   );
 
@@ -929,19 +1060,19 @@ PC Shift: 無`
               <div key={i} className="relative pl-8 group">
                 {/* Timeline Dot */}
                 <div className="absolute -left-[9px] top-1.5 w-4 h-4 rounded-full bg-rpg-900 border-2 border-rpg-accent group-hover:bg-rpg-accent transition-colors"></div>
-                
+
                 {/* Content */}
                 <div className="bg-rpg-800/60 p-4 rounded-xl border border-rpg-700/50 hover:bg-rpg-800 hover:border-rpg-600 transition-all">
-                   <div className="text-[10px] text-rpg-muted font-mono mb-1 uppercase tracking-wider">Turn {entry.turn}</div>
-                   <div className="text-lg font-bold text-gray-200 group-hover:text-rpg-accent transition-colors">{entry.event}</div>
+                  <div className="text-[10px] text-rpg-muted font-mono mb-1 uppercase tracking-wider">Turn {entry.turn}</div>
+                  <div className="text-lg font-bold text-gray-200 group-hover:text-rpg-accent transition-colors">{entry.event}</div>
                 </div>
               </div>
             ))}
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-rpg-muted opacity-50">
-             <Icon name="book" className="w-12 h-12 mb-4" />
-             <p>歷史的篇章尚未展開...</p>
+            <Icon name="book" className="w-12 h-12 mb-4" />
+            <p>歷史的篇章尚未展開...</p>
           </div>
         )}
         <div ref={historyEndRef} className="h-4" />
@@ -951,8 +1082,8 @@ PC Shift: 無`
 
   const renderSettingsModal = () => {
     // Filter models logic
-    const filteredModels = gameState.models.filter(m => 
-      m.name.toLowerCase().includes(modelSearchTerm.toLowerCase()) || 
+    const filteredModels = gameState.models.filter(m =>
+      m.name.toLowerCase().includes(modelSearchTerm.toLowerCase()) ||
       m.id.toLowerCase().includes(modelSearchTerm.toLowerCase())
     );
     const selectedModelName = gameState.models.find(m => m.id === gameState.selectedModel)?.name || "選擇一個模型";
@@ -972,14 +1103,14 @@ PC Shift: 無`
               <div className="flex justify-between items-center mb-1">
                 <label className="block text-sm font-medium text-rpg-muted">OpenRouter API Key (綁定於目前存檔: {userProfile})</label>
                 <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" className="text-[10px] text-rpg-accent hover:underline flex items-center gap-1">
-                    <Icon name="key" className="w-3 h-3" /> 取得金鑰
+                  <Icon name="key" className="w-3 h-3" /> 取得金鑰
                 </a>
               </div>
-              <Input 
-                type="password" 
-                placeholder="sk-or-..." 
-                value={gameState.apiKey} 
-                onChange={(e) => updateState({ apiKey: e.target.value })} 
+              <Input
+                type="password"
+                placeholder="sk-or-..."
+                value={gameState.apiKey}
+                onChange={(e) => updateState({ apiKey: e.target.value })}
               />
               <p className="text-[10px] text-rpg-muted mt-1">此 Key 將自動儲存於您的瀏覽器中。</p>
             </div>
@@ -990,10 +1121,10 @@ PC Shift: 無`
 
             <div className="relative">
               <label className="block text-sm font-medium text-rpg-muted mb-2">模型選擇 (Model)</label>
-              
+
               {/* Custom Select Box */}
               <div ref={modelListRef}>
-                <div 
+                <div
                   className={`w-full bg-rpg-900 border ${isModelListOpen ? 'border-rpg-accent' : 'border-rpg-700'} text-rpg-text rounded-xl px-4 py-3 flex justify-between items-center cursor-pointer transition-all hover:border-rpg-600`}
                   onClick={() => !gameState.isLoading && gameState.models.length > 0 && setIsModelListOpen(!isModelListOpen)}
                 >
@@ -1009,7 +1140,7 @@ PC Shift: 無`
                     {/* Search Input Sticky Top */}
                     <div className="p-2 border-b border-rpg-800 bg-rpg-900/95 sticky top-0 z-10">
                       <div className="relative">
-                        <input 
+                        <input
                           autoFocus
                           className="w-full bg-rpg-800 text-sm text-rpg-text rounded-lg pl-9 pr-3 py-2 outline-none focus:ring-1 focus:ring-rpg-accent placeholder-rpg-muted/50"
                           placeholder="搜尋模型名稱..."
@@ -1017,17 +1148,17 @@ PC Shift: 無`
                           onChange={(e) => setModelSearchTerm(e.target.value)}
                         />
                         <div className="absolute left-3 top-1/2 -translate-y-1/2 text-rpg-muted">
-                           <Icon name="search" className="w-4 h-4" />
+                          <Icon name="search" className="w-4 h-4" />
                         </div>
                       </div>
                     </div>
-                    
+
                     {/* List Items */}
                     <div className="overflow-y-auto flex-1 custom-scrollbar">
                       {filteredModels.length > 0 ? (
                         filteredModels.map(m => (
-                          <div 
-                            key={m.id} 
+                          <div
+                            key={m.id}
                             className={`px-4 py-3 text-sm cursor-pointer hover:bg-rpg-800 transition-colors ${gameState.selectedModel === m.id ? 'bg-rpg-800 text-rpg-accent font-bold' : 'text-gray-300'}`}
                             onClick={() => {
                               updateState({ selectedModel: m.id });
@@ -1039,7 +1170,7 @@ PC Shift: 無`
                           </div>
                         ))
                       ) : (
-                         <div className="px-4 py-3 text-sm text-rpg-muted italic text-center">找不到相符的模型</div>
+                        <div className="px-4 py-3 text-sm text-rpg-muted italic text-center">找不到相符的模型</div>
                       )}
                     </div>
                   </div>
@@ -1050,23 +1181,23 @@ PC Shift: 無`
 
             {/* Difficulty Setting */}
             <div>
-               <label className="block text-sm font-medium text-rpg-muted mb-2">遊戲難度 (Difficulty)</label>
-               <select 
-                 className="w-full bg-rpg-900 border border-rpg-700 text-rpg-text rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-rpg-accent transition-all cursor-pointer"
-                 value={gameState.difficulty}
-                 onChange={(e) => updateState({ difficulty: e.target.value as Difficulty })}
-               >
-                 <option value="Story">劇情體驗 (Story) - 專注於故事，判定極易 (DC 5-10)</option>
-                 <option value="Normal">標準冒險 (Normal) - 平衡的挑戰 (DC 10-15)</option>
-                 <option value="Hard">困難挑戰 (Hard) - 考驗策略與運氣 (DC 15-20)</option>
-                 <option value="Hardcore">地獄模式 (Hardcore) - 極易死亡 (DC 20+)</option>
-               </select>
+              <label className="block text-sm font-medium text-rpg-muted mb-2">遊戲難度 (Difficulty)</label>
+              <select
+                className="w-full bg-rpg-900 border border-rpg-700 text-rpg-text rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-rpg-accent transition-all cursor-pointer"
+                value={gameState.difficulty}
+                onChange={(e) => updateState({ difficulty: e.target.value as Difficulty })}
+              >
+                <option value="Story">劇情體驗 (Story) - 專注於故事，判定極易 (DC 5-10)</option>
+                <option value="Normal">標準冒險 (Normal) - 平衡的挑戰 (DC 10-15)</option>
+                <option value="Hard">困難挑戰 (Hard) - 考驗策略與運氣 (DC 15-20)</option>
+                <option value="Hardcore">地獄模式 (Hardcore) - 極易死亡 (DC 20+)</option>
+              </select>
             </div>
-            
+
             <div className="pt-6 border-t border-rpg-700">
-               <Button onClick={handleLogout} variant="danger" className="w-full">
-                 登出並切換存檔 (Logout)
-               </Button>
+              <Button onClick={handleLogout} variant="danger" className="w-full">
+                登出並切換存檔 (Logout)
+              </Button>
             </div>
 
           </div>
@@ -1080,68 +1211,68 @@ PC Shift: 無`
       </div>
     );
   };
-  
+
   const renderLoginScreen = () => (
     <div className="flex-1 h-full w-full bg-[#050505] relative overflow-hidden flex items-center justify-center p-4">
-       <div className="absolute inset-0 opacity-20 bg-[url('https://www.transparenttextures.com/patterns/dark-leather.png')]"></div>
-       <div className="bg-rpg-900/90 border border-rpg-700 p-8 md:p-12 rounded-3xl shadow-2xl max-w-md w-full relative z-10 backdrop-blur">
-          <div className="text-center mb-10">
-             <h1 className="text-4xl font-black text-white mb-2 tracking-tight">無限文字冒險</h1>
-             <p className="text-rpg-accent text-sm tracking-[0.3em] uppercase">Infinite Adventure</p>
+      <div className="absolute inset-0 opacity-20 bg-[url('https://www.transparenttextures.com/patterns/dark-leather.png')]"></div>
+      <div className="bg-rpg-900/90 border border-rpg-700 p-8 md:p-12 rounded-3xl shadow-2xl max-w-md w-full relative z-10 backdrop-blur">
+        <div className="text-center mb-10">
+          <h1 className="text-4xl font-black text-white mb-2 tracking-tight">無限文字冒險</h1>
+          <p className="text-rpg-accent text-sm tracking-[0.3em] uppercase">Infinite Adventure</p>
+        </div>
+
+        <div className="space-y-6">
+          <div className="space-y-4">
+            <label className="text-xs font-bold text-rpg-muted uppercase tracking-widest block">選擇現有旅程 (Continue Journey)</label>
+            <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
+              {availableProfiles.length > 0 ? availableProfiles.map(name => (
+                <div key={name} className="flex gap-2">
+                  <button
+                    onClick={() => handleLogin(name)}
+                    className="flex-1 bg-rpg-800 hover:bg-rpg-700 text-left px-4 py-3 rounded-xl border border-rpg-700 transition-colors flex items-center gap-3 group"
+                  >
+                    <div className="w-8 h-8 rounded-full bg-rpg-900 flex items-center justify-center text-rpg-accent group-hover:text-white transition-colors">
+                      <Icon name="user" className="w-4 h-4" />
+                    </div>
+                    <span className="font-bold text-gray-200">{name}</span>
+                  </button>
+                  <button
+                    onClick={(e) => handleDeleteProfile(e, name)}
+                    className="bg-rpg-800 hover:bg-red-900/50 text-rpg-muted hover:text-red-500 px-3 rounded-xl border border-rpg-700 transition-colors"
+                  >
+                    <Icon name="trash" className="w-4 h-4" />
+                  </button>
+                </div>
+              )) : (
+                <div className="text-center py-6 text-rpg-muted text-sm italic border border-dashed border-rpg-700 rounded-xl bg-rpg-800/30">
+                  尚未建立任何存檔
+                </div>
+              )}
+            </div>
           </div>
 
-          <div className="space-y-6">
-             <div className="space-y-4">
-               <label className="text-xs font-bold text-rpg-muted uppercase tracking-widest block">選擇現有旅程 (Continue Journey)</label>
-               <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
-                 {availableProfiles.length > 0 ? availableProfiles.map(name => (
-                   <div key={name} className="flex gap-2">
-                     <button 
-                       onClick={() => handleLogin(name)}
-                       className="flex-1 bg-rpg-800 hover:bg-rpg-700 text-left px-4 py-3 rounded-xl border border-rpg-700 transition-colors flex items-center gap-3 group"
-                     >
-                       <div className="w-8 h-8 rounded-full bg-rpg-900 flex items-center justify-center text-rpg-accent group-hover:text-white transition-colors">
-                         <Icon name="user" className="w-4 h-4" />
-                       </div>
-                       <span className="font-bold text-gray-200">{name}</span>
-                     </button>
-                     <button 
-                       onClick={(e) => handleDeleteProfile(e, name)}
-                       className="bg-rpg-800 hover:bg-red-900/50 text-rpg-muted hover:text-red-500 px-3 rounded-xl border border-rpg-700 transition-colors"
-                     >
-                       <Icon name="trash" className="w-4 h-4" />
-                     </button>
-                   </div>
-                 )) : (
-                   <div className="text-center py-6 text-rpg-muted text-sm italic border border-dashed border-rpg-700 rounded-xl bg-rpg-800/30">
-                     尚未建立任何存檔
-                   </div>
-                 )}
-               </div>
-             </div>
-             
-             <div className="relative py-4">
-               <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-rpg-700"></div></div>
-               <div className="relative flex justify-center text-xs uppercase"><span className="bg-rpg-900 px-2 text-rpg-muted">Or Create New</span></div>
-             </div>
+          <div className="relative py-4">
+            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-rpg-700"></div></div>
+            <div className="relative flex justify-center text-xs uppercase"><span className="bg-rpg-900 px-2 text-rpg-muted">Or Create New</span></div>
+          </div>
 
-             <div className="space-y-3">
-               <Input 
-                 placeholder="輸入新旅程名稱..." 
-                 value={newProfileName}
-                 onChange={(e) => setNewProfileName(e.target.value)}
-                 onKeyDown={(e) => e.key === 'Enter' && handleCreateProfile()}
-               />
-               <Button onClick={handleCreateProfile} className="w-full py-3 font-bold" disabled={!newProfileName.trim()}>
-                 <Icon name="plus" className="w-5 h-5" /> 開始新的冒險
-               </Button>
-             </div>
+          <div className="space-y-3">
+            <Input
+              placeholder="輸入新旅程名稱..."
+              value={newProfileName}
+              onChange={(e) => setNewProfileName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleCreateProfile()}
+            />
+            <Button onClick={handleCreateProfile} className="w-full py-3 font-bold" disabled={!newProfileName.trim()}>
+              <Icon name="plus" className="w-5 h-5" /> 開始新的冒險
+            </Button>
           </div>
-          
-          <div className="mt-8 text-center text-[10px] text-rpg-muted/50">
-             所有的遊戲進度與 API Key 皆儲存於此瀏覽器中。
-          </div>
-       </div>
+        </div>
+
+        <div className="mt-8 text-center text-[10px] text-rpg-muted/50">
+          所有的遊戲進度與 API Key 皆儲存於此瀏覽器中。
+        </div>
+      </div>
     </div>
   );
 
@@ -1159,7 +1290,7 @@ PC Shift: 無`
       {gameState.showSettings && renderSettingsModal()}
       {gameState.showStyleEditor && renderStyleEditorModal()}
       {showHistory && renderHistoryLog()}
-      
+
       {gameState.error && (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[150] bg-red-600/90 backdrop-blur px-8 py-4 rounded-2xl shadow-2xl border border-white/20 animate-fade-in flex items-center gap-3">
           <Icon name="alert" className="w-8 h-8" />
@@ -1170,12 +1301,12 @@ PC Shift: 無`
 
       {loadingStep && (
         <div className="fixed inset-0 z-[140] bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center animate-fade-in">
-           <div className="w-16 h-16 border-4 border-rpg-accent border-t-transparent rounded-full animate-spin mb-6"></div>
-           <div className="text-xl font-bold text-rpg-accent animate-pulse">{loadingStep}</div>
-           <p className="mt-2 text-rpg-muted text-sm text-center px-4">正在根據您的偏好填充細節...</p>
+          <div className="w-16 h-16 border-4 border-rpg-accent border-t-transparent rounded-full animate-spin mb-6"></div>
+          <div className="text-xl font-bold text-rpg-accent animate-pulse">{loadingStep}</div>
+          <p className="mt-2 text-rpg-muted text-sm text-center px-4">正在根據您的偏好填充細節...</p>
         </div>
       )}
-      
+
       <div className="flex-1 h-full w-full relative overflow-hidden">
         {gameState.viewMode === 'GM' ? (
           <div className="flex flex-col h-full bg-[#1e293b]/50 relative overflow-hidden">
@@ -1185,8 +1316,8 @@ PC Shift: 無`
                   {gameState.isGameStarted ? 'GM 幕後控制台 (修正模式)' : 'GM 創意工坊'}
                 </h2>
                 <p className="text-xs text-rpg-muted italic">
-                  {gameState.isGameStarted 
-                    ? '「動態修正、劇情諮詢與世界觀補充。我隨時準備好調整故事。」' 
+                  {gameState.isGameStarted
+                    ? '「動態修正、劇情諮詢與世界觀補充。我隨時準備好調整故事。」'
                     : '「在此描繪故事的輪廓，細節交由我來補完。」'}
                 </p>
               </div>
@@ -1199,7 +1330,7 @@ PC Shift: 無`
                 </Button>
               </div>
             </header>
-            
+
             <main className="flex-1 min-h-0 overflow-y-auto p-4 md:p-8 space-y-6 scroll-smooth custom-scrollbar">
               <div className="max-w-4xl mx-auto space-y-6 pb-12">
                 {gameState.gmMessages.map((msg, i) => (
@@ -1217,11 +1348,11 @@ PC Shift: 無`
             <footer className="flex-none p-6 bg-rpg-800/90 border-t border-rpg-700 backdrop-blur-md z-10">
               <div className="max-w-4xl mx-auto flex flex-col gap-4">
                 <div className="flex gap-3">
-                  <textarea 
-                    className="flex-1 bg-rpg-900 border border-rpg-700 rounded-2xl p-4 text-rpg-text focus:ring-2 focus:ring-rpg-accent outline-none transition-all placeholder:text-rpg-muted/40 shadow-inner h-16 resize-none custom-scrollbar text-base" 
+                  <textarea
+                    className="flex-1 bg-rpg-900 border border-rpg-700 rounded-2xl p-4 text-rpg-text focus:ring-2 focus:ring-rpg-accent outline-none transition-all placeholder:text-rpg-muted/40 shadow-inner h-16 resize-none custom-scrollbar text-base"
                     placeholder="輸入冒險主題或具體想法... (Enter 換行)"
-                    value={inputMessage} 
-                    onChange={(e) => setInputMessage(e.target.value)} 
+                    value={inputMessage}
+                    onChange={(e) => setInputMessage(e.target.value)}
                     // onKeyDown removed to prevent send on Enter
                     disabled={gameState.isLoading}
                   />
@@ -1237,105 +1368,105 @@ PC Shift: 無`
           <div className="flex flex-col h-full bg-[#050505] relative overflow-hidden">
             {/* Standard Chat UI for RP */}
             <div className="flex-1 relative overflow-hidden bg-rpg-900">
-               {/* Background Texture Overlay */}
-               <div className="absolute inset-0 opacity-10 bg-[url('https://www.transparenttextures.com/patterns/dark-leather.png')] pointer-events-none"></div>
+              {/* Background Texture Overlay */}
+              <div className="absolute inset-0 opacity-10 bg-[url('https://www.transparenttextures.com/patterns/dark-leather.png')] pointer-events-none"></div>
 
-               {/* Header / Top Controls - IMPROVED FOR MOBILE */}
-               <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center z-30 bg-gradient-to-b from-rpg-900/95 to-transparent pointer-events-none">
-                  <div className="flex gap-2 pointer-events-auto">
-                    <button onClick={() => setShowHistory(true)} className="bg-rpg-800/80 hover:bg-rpg-700 backdrop-blur px-5 py-2.5 rounded-full border border-white/10 text-xs text-white/90 transition-all shadow-xl flex items-center gap-2">
-                      <Icon name="scroll" className="w-4 h-4" /> 冒險大事記
-                    </button>
-                    <button onClick={() => updateState({ showStyleEditor: true })} className="bg-rpg-800/80 hover:bg-rpg-700 backdrop-blur px-3 py-2.5 rounded-full border border-white/10 text-xs text-white/90 transition-all shadow-xl flex items-center justify-center">
-                      <Icon name="edit" className="w-4 h-4" />
-                    </button>
-                  </div>
-                  
-                  {/* Top Right Controls (Replaces Floating Sidebar) */}
-                  <div className="flex gap-2 pointer-events-auto">
-                    <button onClick={() => setShowSidebar(true)} className="bg-rpg-accent hover:bg-cyan-400 text-rpg-900 font-bold px-4 py-2.5 rounded-full border border-white/10 text-xs transition-all shadow-xl flex items-center gap-2">
-                      <Icon name="menu" className="w-4 h-4" /> 選單
-                    </button>
-                  </div>
-               </div>
-               
-               {/* Vertical Chat Container */}
-               <div className="absolute inset-0 pt-20 pb-0 px-4 md:px-0 overflow-y-auto overflow-x-hidden custom-scrollbar flex flex-col">
-                 <div className="flex-1 max-w-4xl mx-auto w-full space-y-8 pb-8">
-                    <div className="text-center text-rpg-muted text-[10px] font-mono opacity-50 mb-4">{gameState.world.name} — Turn {gameState.turnCount}</div>
-                    
-                    {gameState.messages.map((msg, i) => {
-                      const displayContent = msg.content.replace(/---UPDATE_START---[\s\S]*?---UPDATE_END---/, '').trim();
-                      const isLast = i === gameState.messages.length - 1;
-                      
-                      return (
-                        <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in group`}>
-                           <div className={`
+              {/* Header / Top Controls - IMPROVED FOR MOBILE */}
+              <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center z-30 bg-gradient-to-b from-rpg-900/95 to-transparent pointer-events-none">
+                <div className="flex gap-2 pointer-events-auto">
+                  <button onClick={() => setShowHistory(true)} className="bg-rpg-800/80 hover:bg-rpg-700 backdrop-blur px-5 py-2.5 rounded-full border border-white/10 text-xs text-white/90 transition-all shadow-xl flex items-center gap-2">
+                    <Icon name="scroll" className="w-4 h-4" /> 冒險大事記
+                  </button>
+                  <button onClick={() => updateState({ showStyleEditor: true })} className="bg-rpg-800/80 hover:bg-rpg-700 backdrop-blur px-3 py-2.5 rounded-full border border-white/10 text-xs text-white/90 transition-all shadow-xl flex items-center justify-center">
+                    <Icon name="edit" className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Top Right Controls (Replaces Floating Sidebar) */}
+                <div className="flex gap-2 pointer-events-auto">
+                  <button onClick={() => setShowSidebar(true)} className="bg-rpg-accent hover:bg-cyan-400 text-rpg-900 font-bold px-4 py-2.5 rounded-full border border-white/10 text-xs transition-all shadow-xl flex items-center gap-2">
+                    <Icon name="menu" className="w-4 h-4" /> 選單
+                  </button>
+                </div>
+              </div>
+
+              {/* Vertical Chat Container */}
+              <div className="absolute inset-0 pt-20 pb-0 px-4 md:px-0 overflow-y-auto overflow-x-hidden custom-scrollbar flex flex-col">
+                <div className="flex-1 max-w-4xl mx-auto w-full space-y-8 pb-8">
+                  <div className="text-center text-rpg-muted text-[10px] font-mono opacity-50 mb-4">{gameState.world.name} — Turn {gameState.turnCount}</div>
+
+                  {gameState.messages.map((msg, i) => {
+                    const displayContent = msg.content.replace(/---UPDATE_START---[\s\S]*?---UPDATE_END---/, '').trim();
+                    const isLast = i === gameState.messages.length - 1;
+
+                    return (
+                      <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in group`}>
+                        <div className={`
                              relative max-w-[90%] md:max-w-[80%] p-6 rounded-2xl shadow-xl border
-                             ${msg.role === 'user' 
-                               ? 'bg-rpg-accent/10 border-rpg-accent/30 text-white rounded-tr-none mr-2' 
-                               : 'bg-rpg-800/80 border-rpg-700/50 text-gray-200 rounded-tl-none ml-2 backdrop-blur-sm'}
+                             ${msg.role === 'user'
+                            ? 'bg-rpg-accent/10 border-rpg-accent/30 text-white rounded-tr-none mr-2'
+                            : 'bg-rpg-800/80 border-rpg-700/50 text-gray-200 rounded-tl-none ml-2 backdrop-blur-sm'}
                            `}>
-                             {/* Role Label */}
-                             <div className={`text-[10px] uppercase font-bold tracking-widest mb-2 opacity-50 ${msg.role === 'user' ? 'text-right text-rpg-accent' : 'text-left text-rpg-muted'}`}>
-                               {msg.role === 'user' ? 'YOU' : 'GAME MASTER'}
-                             </div>
-                             
-                             {/* Content */}
-                             {renderMessageContent(displayContent)}
-                             
-                             {/* Action Buttons (Hover) */}
-                             <div className={`absolute -top-3 ${msg.role === 'user' ? '-left-3' : '-right-3'} opacity-0 group-hover:opacity-100 transition-opacity flex gap-2`}>
-                               {/* Only show Regenerate for the very last message if it is an assistant */}
-                               {isLast && msg.role === 'assistant' && !gameState.isLoading && (
-                                 <button 
-                                   onClick={handleRegenerate}
-                                   className="bg-rpg-700 hover:bg-rpg-accent hover:text-rpg-900 text-white p-2 rounded-full shadow-lg border border-rpg-600 transition-colors text-xs flex items-center justify-center w-8 h-8" 
-                                   title="重新生成 (Regenerate)"
-                                 >
-                                   <Icon name="refresh" className="w-4 h-4" />
-                                 </button>
-                               )}
-                               <button 
-                                 onClick={() => handleDeleteMessage(i)}
-                                 className="bg-rpg-700 hover:bg-red-500 text-white p-2 rounded-full shadow-lg border border-rpg-600 transition-colors text-xs flex items-center justify-center w-8 h-8" 
-                                 title="刪除此訊息 (Delete)"
-                               >
-                                 <Icon name="trash" className="w-4 h-4" />
-                               </button>
-                             </div>
-                           </div>
-                        </div>
-                      );
-                    })}
-                    
-                    {gameState.isLoading && (
-                      <div className="flex justify-start animate-fade-in ml-2">
-                        <div className="bg-rpg-800/50 border border-rpg-700/30 p-4 rounded-2xl rounded-tl-none flex items-center gap-2">
-                          <span className="w-2 h-2 bg-rpg-accent rounded-full animate-bounce"></span>
-                          <span className="w-2 h-2 bg-rpg-accent rounded-full animate-bounce delay-100"></span>
-                          <span className="w-2 h-2 bg-rpg-accent rounded-full animate-bounce delay-200"></span>
+                          {/* Role Label */}
+                          <div className={`text-[10px] uppercase font-bold tracking-widest mb-2 opacity-50 ${msg.role === 'user' ? 'text-right text-rpg-accent' : 'text-left text-rpg-muted'}`}>
+                            {msg.role === 'user' ? 'YOU' : 'GAME MASTER'}
+                          </div>
+
+                          {/* Content */}
+                          {renderMessageContent(displayContent)}
+
+                          {/* Action Buttons (Hover) */}
+                          <div className={`absolute -top-3 ${msg.role === 'user' ? '-left-3' : '-right-3'} opacity-0 group-hover:opacity-100 transition-opacity flex gap-2`}>
+                            {/* Only show Regenerate for the very last message if it is an assistant */}
+                            {isLast && msg.role === 'assistant' && !gameState.isLoading && (
+                              <button
+                                onClick={handleRegenerate}
+                                className="bg-rpg-700 hover:bg-rpg-accent hover:text-rpg-900 text-white p-2 rounded-full shadow-lg border border-rpg-600 transition-colors text-xs flex items-center justify-center w-8 h-8"
+                                title="重新生成 (Regenerate)"
+                              >
+                                <Icon name="refresh" className="w-4 h-4" />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleDeleteMessage(i)}
+                              className="bg-rpg-700 hover:bg-red-500 text-white p-2 rounded-full shadow-lg border border-rpg-600 transition-colors text-xs flex items-center justify-center w-8 h-8"
+                              title="刪除此訊息 (Delete)"
+                            >
+                              <Icon name="trash" className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    )}
-                    <div ref={rpScrollEndRef} className="h-4"></div>
-                 </div>
-               </div>
+                    );
+                  })}
+
+                  {gameState.isLoading && (
+                    <div className="flex justify-start animate-fade-in ml-2">
+                      <div className="bg-rpg-800/50 border border-rpg-700/30 p-4 rounded-2xl rounded-tl-none flex items-center gap-2">
+                        <span className="w-2 h-2 bg-rpg-accent rounded-full animate-bounce"></span>
+                        <span className="w-2 h-2 bg-rpg-accent rounded-full animate-bounce delay-100"></span>
+                        <span className="w-2 h-2 bg-rpg-accent rounded-full animate-bounce delay-200"></span>
+                      </div>
+                    </div>
+                  )}
+                  <div ref={rpScrollEndRef} className="h-4"></div>
+                </div>
+              </div>
             </div>
 
             {/* Input Area */}
             <div className="p-6 md:p-8 bg-rpg-900 border-t border-rpg-700/50 flex-none z-20 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
-               <div className="max-w-2xl mx-auto flex gap-4">
-                 <textarea 
-                    className="flex-1 bg-rpg-800/50 border border-rpg-700 rounded-3xl p-5 text-rpg-text h-16 resize-none focus:ring-2 focus:ring-rpg-accent outline-none transition-all placeholder:text-rpg-muted/40 font-sans text-lg custom-scrollbar" 
-                    placeholder="描述你的行動... (Enter 換行)"
-                    value={inputMessage} 
-                    onChange={(e) => setInputMessage(e.target.value)} 
-                    // onKeyDown removed to prevent send on Enter
-                    disabled={gameState.isLoading}
-                 />
-                 <Button onClick={handleSendRPMessage} isLoading={gameState.isLoading} className="h-16 px-10 rounded-3xl font-bold text-lg shadow-lg shadow-rpg-accent/10">行動</Button>
-               </div>
+              <div className="max-w-2xl mx-auto flex gap-4">
+                <textarea
+                  className="flex-1 bg-rpg-800/50 border border-rpg-700 rounded-3xl p-5 text-rpg-text h-16 resize-none focus:ring-2 focus:ring-rpg-accent outline-none transition-all placeholder:text-rpg-muted/40 font-sans text-lg custom-scrollbar"
+                  placeholder="描述你的行動... (Enter 換行)"
+                  value={inputMessage}
+                  onChange={(e) => setInputMessage(e.target.value)}
+                  // onKeyDown removed to prevent send on Enter
+                  disabled={gameState.isLoading}
+                />
+                <Button onClick={handleSendRPMessage} isLoading={gameState.isLoading} className="h-16 px-10 rounded-3xl font-bold text-lg shadow-lg shadow-rpg-accent/10">行動</Button>
+              </div>
             </div>
           </div>
         )}
@@ -1355,97 +1486,122 @@ PC Shift: 無`
           <div className="flex gap-2">
             <Button variant={gameState.viewMode === 'RP' ? 'primary' : 'secondary'} className="rounded-xl py-3 shadow-lg flex-1" disabled={!gameState.isGameStarted} onClick={() => updateState({ viewMode: 'RP' })}>返回冒險</Button>
             <Button variant="secondary" className="rounded-xl py-3 shadow-lg px-4" onClick={() => updateState({ showSettings: true })}>
-               <Icon name="settings" className="w-5 h-5" />
+              <Icon name="settings" className="w-5 h-5" />
             </Button>
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto space-y-6 no-scrollbar pr-1">
-           {/* Summary Section */}
-           <div className="bg-amber-900/20 border border-amber-700/30 p-5 rounded-2xl relative overflow-hidden group">
-             <div className="absolute top-0 left-0 w-1 h-full bg-amber-600"></div>
-             <div className="text-[10px] text-amber-500 uppercase tracking-[0.2em] mb-2 font-bold flex items-center gap-2">
-                <span className="animate-pulse text-amber-500"><Icon name="dot" className="w-2 h-2" /></span> 當前局勢摘要
-             </div>
-             <div className="text-[11px] text-gray-300 leading-relaxed font-mono whitespace-pre-wrap">
-               {gameState.summary || "等待冒險展開..."}
-             </div>
-           </div>
+          {/* Summary Section */}
+          <div className="bg-amber-900/20 border border-amber-700/30 p-5 rounded-2xl relative overflow-hidden group">
+            <div className="absolute top-0 left-0 w-1 h-full bg-amber-600"></div>
+            <div className="text-[10px] text-amber-500 uppercase tracking-[0.2em] mb-2 font-bold flex items-center gap-2">
+              <span className="animate-pulse text-amber-500"><Icon name="dot" className="w-2 h-2" /></span> 當前局勢摘要 (L1)
+            </div>
+            <div className="text-[11px] text-gray-300 leading-relaxed font-mono whitespace-pre-wrap">
+              {storyStateToString(gameState.storyState)}
+            </div>
+          </div>
 
-           {/* World Data Section */}
-           {gameState.world.description && gameState.world.description !== DEFAULT_WORLD.description && (
-             <div className="bg-rpg-800/50 border border-rpg-700 p-1 rounded-2xl overflow-hidden">
-               <button 
-                 onClick={() => setIsWorldDataExpanded(!isWorldDataExpanded)} 
-                 className="w-full flex items-center justify-between p-4 hover:bg-rpg-700/50 transition-colors"
-               >
-                 <div className="flex items-center gap-3">
-                    <Icon name="book" className="w-5 h-5 text-rpg-muted" />
-                    <span className="text-[10px] uppercase tracking-widest font-bold text-rpg-muted">世界設定檔案 (World Data)</span>
-                 </div>
-                 <Icon name="chevronDown" className={`w-4 h-4 text-rpg-muted transition-transform ${isWorldDataExpanded ? 'rotate-180' : ''}`} />
-               </button>
-               
-               {isWorldDataExpanded && (
-                 <div className="px-5 pb-5 pt-0 animate-fade-in">
-                   <div className="text-[11px] text-gray-400 leading-relaxed font-mono whitespace-pre-wrap border-t border-rpg-700/50 pt-4">
-                     {gameState.world.description}
-                   </div>
-                 </div>
-               )}
-             </div>
-           )}
-
-           <div className="bg-gradient-to-br from-rpg-800 to-rpg-900 p-6 rounded-3xl border border-rpg-700 shadow-inner">
-             <div className="text-[9px] text-rpg-muted uppercase tracking-[0.3em] mb-2 font-bold">Adventurer Dossier</div>
-             <div className="text-2xl font-serif text-white mb-1 drop-shadow-md">{gameState.character.name}</div>
-             <div className="text-sm text-rpg-accent font-bold tracking-tight">{gameState.character.race} · {gameState.character.class} <span className="text-white/40 ml-2">LEVEL {gameState.character.level}</span></div>
-           </div>
-
-           <div className="space-y-6">
-             <div>
-                <div className="flex justify-between text-xs font-black mb-2 uppercase tracking-widest text-red-400"><span>Vitality (HP)</span><span>{gameState.character.hp} / {gameState.character.maxHp}</span></div>
-                <div className="h-3 bg-rpg-800 rounded-full border border-white/5 p-0.5"><div className="h-full bg-gradient-to-r from-red-700 to-red-400 rounded-full transition-all duration-1000" style={{width: `${(gameState.character.hp/gameState.character.maxHp)*100}%`}} /></div>
-             </div>
-             
-             <div>
-                <div className="flex justify-between text-xs font-black mb-2 uppercase tracking-widest text-blue-400"><span>Aether (MP)</span><span>{gameState.character.mp} / {gameState.character.maxMp}</span></div>
-                <div className="h-3 bg-rpg-800 rounded-full border border-white/5 p-0.5"><div className="h-full bg-gradient-to-r from-blue-700 to-blue-400 rounded-full transition-all duration-1000" style={{width: `${(gameState.character.mp/gameState.character.maxMp)*100}%`}} /></div>
-             </div>
-           </div>
-
-           <div className="grid grid-cols-2 gap-3">
-             {Object.entries(gameState.character.attributes).map(([key, val]) => (
-               <div key={key} className="bg-white/5 p-4 rounded-2xl border border-white/5 flex flex-col items-center hover:bg-white/10 transition-colors group">
-                 <div className="text-[10px] text-rpg-muted mb-1 group-hover:text-rpg-accent transition-colors">{key}</div>
-                 <div className="text-2xl font-mono text-rpg-accent font-black tracking-tighter">{val}</div>
-               </div>
-             ))}
-           </div>
-
-           <div>
-              <div className="text-[10px] text-rpg-muted uppercase tracking-[0.3em] mb-3 font-bold flex items-center gap-2">
-                <Icon name="lightning" className="w-4 h-4" /> 技能與能力
+          {/* Lore Book Section (L2) */}
+          {gameState.loreBook.length > 0 && (
+            <div className="bg-rpg-800/50 border border-rpg-700 p-1 rounded-2xl overflow-hidden">
+              <div className="flex items-center gap-3 px-4 py-3 border-b border-rpg-700/50">
+                <Icon name="book" className="w-4 h-4 text-cyan-400" />
+                <span className="text-[10px] uppercase tracking-widest font-bold text-cyan-400">世界典籍 (Lore Book — L2)</span>
+                <span className="ml-auto text-[10px] text-rpg-muted font-mono">{gameState.loreBook.length} 條目</span>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {gameState.character.skills.map((skill, idx) => (
-                  <span key={idx} className="px-3 py-1 bg-rpg-800 border border-rpg-600 text-rpg-accent text-xs rounded shadow-sm">{skill}</span>
+              <div className="px-4 py-3 space-y-3 max-h-60 overflow-y-auto custom-scrollbar">
+                {gameState.loreBook.map(entry => (
+                  <div key={entry.id} className="border border-rpg-700/40 rounded-xl p-3 bg-rpg-900/50">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded bg-cyan-900/50 text-cyan-400 border border-cyan-800/50">
+                        {loreCategoryLabel[entry.category]}
+                      </span>
+                      <span className="text-xs font-bold text-gray-200">{entry.title}</span>
+                    </div>
+                    <div className="text-[11px] text-gray-400 leading-relaxed font-mono">{entry.content}</div>
+                  </div>
                 ))}
-                {gameState.character.skills.length === 0 && <span className="text-xs text-rpg-muted italic opacity-30">尚未習得任何技能...</span>}
               </div>
-           </div>
+            </div>
+          )}
 
-           <div>
-             <div className="text-[10px] text-rpg-muted uppercase tracking-[0.3em] mb-3 font-bold flex items-center gap-2">
-                <Icon name="bag" className="w-4 h-4" /> 背包物品
-             </div>
-             <div className="flex flex-wrap gap-2">
-               {gameState.character.inventory.map((item, idx) => (
-                 <span key={idx} className="px-3 py-1.5 bg-rpg-700/40 text-[11px] rounded-xl border border-rpg-600 text-gray-300 shadow-sm">#{item}</span>
-               ))}
-               {gameState.character.inventory.length === 0 && <span className="text-xs text-rpg-muted italic opacity-30">口袋空空...</span>}
-             </div>
-           </div>
+          {/* World Data Section */}
+          {gameState.world.description && gameState.world.description !== DEFAULT_WORLD.description && (
+            <div className="bg-rpg-800/50 border border-rpg-700 p-1 rounded-2xl overflow-hidden">
+              <button
+                onClick={() => setIsWorldDataExpanded(!isWorldDataExpanded)}
+                className="w-full flex items-center justify-between p-4 hover:bg-rpg-700/50 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <Icon name="book" className="w-5 h-5 text-rpg-muted" />
+                  <span className="text-[10px] uppercase tracking-widest font-bold text-rpg-muted">世界設定檔案 (World Data)</span>
+                </div>
+                <Icon name="chevronDown" className={`w-4 h-4 text-rpg-muted transition-transform ${isWorldDataExpanded ? 'rotate-180' : ''}`} />
+              </button>
+
+              {isWorldDataExpanded && (
+                <div className="px-5 pb-5 pt-0 animate-fade-in">
+                  <div className="text-[11px] text-gray-400 leading-relaxed font-mono whitespace-pre-wrap border-t border-rpg-700/50 pt-4">
+                    {gameState.world.description}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+
+          <div className="bg-gradient-to-br from-rpg-800 to-rpg-900 p-6 rounded-3xl border border-rpg-700 shadow-inner">
+            <div className="text-[9px] text-rpg-muted uppercase tracking-[0.3em] mb-2 font-bold">Adventurer Dossier</div>
+            <div className="text-2xl font-serif text-white mb-1 drop-shadow-md">{gameState.character.name}</div>
+            <div className="text-sm text-rpg-accent font-bold tracking-tight">{gameState.character.race} · {gameState.character.class} <span className="text-white/40 ml-2">LEVEL {gameState.character.level}</span></div>
+          </div>
+
+          <div className="space-y-6">
+            <div>
+              <div className="flex justify-between text-xs font-black mb-2 uppercase tracking-widest text-red-400"><span>Vitality (HP)</span><span>{gameState.character.hp} / {gameState.character.maxHp}</span></div>
+              <div className="h-3 bg-rpg-800 rounded-full border border-white/5 p-0.5"><div className="h-full bg-gradient-to-r from-red-700 to-red-400 rounded-full transition-all duration-1000" style={{ width: `${(gameState.character.hp / gameState.character.maxHp) * 100}%` }} /></div>
+            </div>
+
+            <div>
+              <div className="flex justify-between text-xs font-black mb-2 uppercase tracking-widest text-blue-400"><span>Aether (MP)</span><span>{gameState.character.mp} / {gameState.character.maxMp}</span></div>
+              <div className="h-3 bg-rpg-800 rounded-full border border-white/5 p-0.5"><div className="h-full bg-gradient-to-r from-blue-700 to-blue-400 rounded-full transition-all duration-1000" style={{ width: `${(gameState.character.mp / gameState.character.maxMp) * 100}%` }} /></div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            {Object.entries(gameState.character.attributes).map(([key, val]) => (
+              <div key={key} className="bg-white/5 p-4 rounded-2xl border border-white/5 flex flex-col items-center hover:bg-white/10 transition-colors group">
+                <div className="text-[10px] text-rpg-muted mb-1 group-hover:text-rpg-accent transition-colors">{key}</div>
+                <div className="text-2xl font-mono text-rpg-accent font-black tracking-tighter">{val}</div>
+              </div>
+            ))}
+          </div>
+
+          <div>
+            <div className="text-[10px] text-rpg-muted uppercase tracking-[0.3em] mb-3 font-bold flex items-center gap-2">
+              <Icon name="lightning" className="w-4 h-4" /> 技能與能力
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {gameState.character.skills.map((skill, idx) => (
+                <span key={idx} className="px-3 py-1 bg-rpg-800 border border-rpg-600 text-rpg-accent text-xs rounded shadow-sm">{skill}</span>
+              ))}
+              {gameState.character.skills.length === 0 && <span className="text-xs text-rpg-muted italic opacity-30">尚未習得任何技能...</span>}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[10px] text-rpg-muted uppercase tracking-[0.3em] mb-3 font-bold flex items-center gap-2">
+              <Icon name="bag" className="w-4 h-4" /> 背包物品
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {gameState.character.inventory.map((item, idx) => (
+                <span key={idx} className="px-3 py-1.5 bg-rpg-700/40 text-[11px] rounded-xl border border-rpg-600 text-gray-300 shadow-sm">#{item}</span>
+              ))}
+              {gameState.character.inventory.length === 0 && <span className="text-xs text-rpg-muted italic opacity-30">口袋空空...</span>}
+            </div>
+          </div>
         </div>
       </div>
     </div>
