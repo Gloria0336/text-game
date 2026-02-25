@@ -31,8 +31,7 @@ export interface CharacterStats {
   mp: number;
   maxMp: number;
   attributes: Record<string, number>;
-  skills: string[];
-  inventory: string[];
+  skills: Skill[];
   statusEffects: string[];
   background: string;
 }
@@ -84,6 +83,7 @@ export interface GameState {
   viewMode: ViewMode;
   showSettings: boolean;
   showStyleEditor: boolean;
+  showLorebook: boolean;
   isGameStarted: boolean;
 
   // Game Data
@@ -115,7 +115,6 @@ export const DEFAULT_CHARACTER: CharacterStats = {
   maxMp: 50,
   attributes: {},
   skills: [],
-  inventory: [],
   statusEffects: [],
   background: '尚未設定',
 };
