@@ -48,25 +48,25 @@ export interface WorldSetting {
   promptMix: string;
 }
 
-// --- NEW: Structured Story State (replaces summary string) ---
+// --- L1: Short-term Story State (最近 5 輪的即時動態) ---
 export interface StoryState {
-  activeThreads: string;
-  npcStates: string;
-  plantedPayoffs: string;
-  worldLock: string;
-  arcPosition: string;
-  pcShift: string;
+  activeThreads: string;  // 當前活躍劇情線
+  npcStates: string;      // 重要 NPC 即時狀態
+  plantedPayoffs: string; // 本輪前後埋下/回收的伏筆
+  arcPosition: string;    // 劇情進度位置
+  pcShift: string;        // 角色心境/狀態轉變
 }
 
-// --- NEW: Lore Book Entry (L2 permanent memory) ---
-export type LoreCategory = 'npc' | 'world' | 'payoff' | 'rule';
+// --- L2: Lore Book Entry (中期 15-20 輪劇情大綱/伏筆/隱藏路線) ---
+export type LoreCategory = 'npc' | 'world' | 'payoff' | 'rule' | 'hidden_plot';
 
 export interface LoreEntry {
   id: string;
   category: LoreCategory;
   title: string;
   content: string;
-  lockedAt: number; // turnCount when this entry was written
+  lockedAt: number;        // 寫入時的回合數
+  expireAtTurn?: number;   // 可選：預計過期的回合數（用於標記短命的中期記憶）
 }
 
 export interface GameState {
@@ -128,8 +128,7 @@ export const DEFAULT_WORLD: WorldSetting = {
 export const DEFAULT_STORY_STATE: StoryState = {
   activeThreads: '冒險序章',
   npcStates: '無',
-  plantedPayoffs: '世界觀建立中',
-  worldLock: '尚未鎖定',
+  plantedPayoffs: '無',
   arcPosition: '開端',
   pcShift: '初始狀態',
 };

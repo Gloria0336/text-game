@@ -121,11 +121,10 @@ const DiceResultCard = ({ data }: { data: DiceRollData }) => {
 const RESUMMARY_INTERVAL = 15;
 
 const storyStateToString = (s: StoryState): string =>
-  `📖 STORY STATE
+  `📍 當前局勢 [L1·短期·5輪內]
 Active Threads: ${s.activeThreads}
 NPC States: ${s.npcStates}
 Planted Payoffs: ${s.plantedPayoffs}
-World Lock: ${s.worldLock}
 Arc Position: ${s.arcPosition}
 PC Shift: ${s.pcShift}`;
 
@@ -139,7 +138,6 @@ const mergeSummaryDelta = (
     activeThreads: delta.activeThreads ?? prev.activeThreads,
     npcStates: delta.npcStates ?? prev.npcStates,
     plantedPayoffs: delta.plantedPayoffs ?? prev.plantedPayoffs,
-    worldLock: delta.worldLock ?? prev.worldLock,
     arcPosition: delta.arcPosition ?? prev.arcPosition,
     pcShift: delta.pcShift ?? prev.pcShift,
   };
@@ -150,6 +148,7 @@ const loreCategoryLabel: Record<LoreEntry['category'], string> = {
   world: '世界設定',
   payoff: '伏筆',
   rule: '規則',
+  hidden_plot: '隱藏路線',
 };
 
 // --- INITIAL STATE FACTORY ---
@@ -516,7 +515,10 @@ const App: React.FC = () => {
           "name": "角色名", "race": "種族", "class": "職業", "level": 1,
           "hp": 100, "maxHp": 100, "mp": 50, "maxMp": 50,
           "attributes": { "力量": 10, "敏捷": 10, "智力": 10, "體質": 10 },
-          "skills": ["技能1"], "inventory": ["基礎物品"], "background": "完整的背景故事"
+          "skills": [
+            { "name": "技能名", "type": "Active", "cost": 0, "description": "技能簡短描述" }
+          ],
+          "background": "完整的背景故事"
         }
       }
     `;
@@ -624,8 +626,7 @@ const App: React.FC = () => {
         storyState: {
           activeThreads: '冒險開始',
           npcStates: '無',
-          plantedPayoffs: '序章開啟',
-          worldLock: `${newWorld.name} 建立`,
+          plantedPayoffs: '無',
           arcPosition: '第一章',
           pcShift: '無',
         },
@@ -677,68 +678,68 @@ const App: React.FC = () => {
   // 抽出共用的生成邏輯
   const executeRPGeneration = async (currentHistory: Message[]) => {
     try {
-      // --- Build Lore Book section ---
+      // --- [L2] 中期記憶：建構 Lore Book 區塊 ---
       const loreBookSection = gameState.loreBook.length > 0
-        ? `[世界典籍 (LORE BOOK — 永久記錄，不可忽視)]\n` +
+        ? `\n━━━ [LORE BOOK — 中期記憶·15輪以上的劇情事件/伏筆/隱藏路線] ━━━\n` +
+        `這些是過去已發生並鎖定的劇情，視為既成事實，不可矛盾。\n` +
         gameState.loreBook.map(e =>
           `[${loreCategoryLabel[e.category]}] ${e.title}：${e.content}`
         ).join('\n')
         : '';
 
-      let systemPrompt = `
-        你是一個專業的 TRPG GM。
-        [當前世界] ${gameState.world?.name}
-        [世界設定詳情 (重要)] 
-        ${gameState.world?.description}
+      let systemPrompt = `你是一個專業的 TRPG GM，負責主持一個沉浸式的互動故事。
 
-        [角色狀態] ${JSON.stringify(gameState.character)}
-        [遊戲難度] ${gameState.difficulty}
+━━━ [WORLD DATA — 長期設定·永久固定] ━━━
+這是故事的「憲法」，由玩家在遊戲開始時確立。只有發生世界觀級別的劇變才允許修改。
+禁止在日常劇情中自行更改或矛盾以下設定。
 
-        [前次劇情狀態 (STORY STATE — L1 揮發性記憶)]
-        ${storyStateToString(gameState.storyState)}
+【世界名稱】${gameState.world?.name}
+【遊戲難度】${gameState.difficulty}
+【世界觀、基調、角色設定、額外設定】
+${gameState.world?.description}
 
-        ${loreBookSection}
+【角色數值】
+名稱：${gameState.character.name} | 種族：${gameState.character.race} | 職業：${gameState.character.class} | 等級：${gameState.character.level}
+HP：${gameState.character.hp}/${gameState.character.maxHp} | MP：${gameState.character.mp}/${gameState.character.maxMp}
+屬性：${JSON.stringify(gameState.character.attributes)}
+技能：${gameState.character.skills.map(s => `${s.name}(${s.type}, ${s.description})`).join(' / ') || '無'}
+狀態：${gameState.character.statusEffects.join(' / ') || '正常'}
+${loreBookSection}
 
-        [回應風格指引 (STYLE GUIDE)]
-        ${gameState.isStyleActive ? gameState.customStyle : '標準 TRPG 風格'}
+━━━ [STORY STATE — 短期記憶·最近 5 輪的即時動態] ━━━
+這是近況快照，代表「當下」的劇情狀態，不是完整的世界設定。
+${storyStateToString(gameState.storyState)}
 
-        [GM 規則]
-        1. 核心指令：仔細閱讀上方對話紀錄。這是一個連續的故事。你的回應必須接續「最新的玩家行動」。
-        2. 絕對禁止重複：不要重複上一段對話已經發生過的描述。如果玩家重複了行動，請描述該行動的後續或失敗，而不是重複場景。
-        3. 敘事視角：請嚴格使用第二人稱「你」來描述主角的經歷與感受。
-        4. **行動與成敗判定**：
-           - 因為我們已經移除了所有擲骰數值檢定，玩家行動的成敗，請你作為 GM 根據「邏輯」、「角色的背景與能力」、「當前情境」來**直接判斷**。
-           - 若玩家嘗試合理或符合其能力的行動，請讓其成功或部分成功。
-           - 若玩家嘗試過於荒謬、超出能力範圍、或是遭遇強敵，請給予合理失敗的後果，並生動描述其處境。
-           - 不要輸出任何擲骰數值或要求檢定。
+━━━ [STYLE GUIDE — 敘事風格] ━━━
+${gameState.isStyleActive ? gameState.customStyle : '標準 TRPG 風格，繁體中文，生動且沉浸'}
 
-        5. **建議行動**：在劇情描述結束後，請列出兩個建議。
+━━━ [GM 規則] ━━━
+1. **連續性**：仔細閱讀對話紀錄，你的回應必須接續「最新的玩家行動」，絕不重複已發生的場景。
+2. **視角**：嚴格使用第二人稱「你」描述主角的經歷與感受。
+3. **行動裁定**：根據邏輯、角色能力、當前情境直接判斷成敗，不輸出擲骰數值。
+4. **建議行動**：劇情結束後列出兩個具體的建議行動。
 
-        6. **狀態更新**：每次回應的結尾，你 *必須* 附上一個 JSON 區塊。
-           - **有機成長系統 (Organic Growth)**: 當玩家在劇情中經歷了深刻的鍛鍊、領悟、或是戰勝強敵後，你可以直接賦予角色新的專長與技能。請將新技能名稱和原因直接加入 "add_skills" 陣列中 (格式為 {"name": "技能名稱", "type": "Active" | "Passive", "cost": 0, "description": "簡短描述", "reason": "獲得原因"})。
-           - **大事記更新 (Chronicle Event)**: 如果本回合發生了任何值得紀錄的事件（例如：遇見重要 NPC、發現新地點、戰勝強敵、獲得關鍵道具），請在 "chronicle_event" 欄位中提供一個**簡短的標題式描述**。若無特殊事件，填 null。
+5. **狀態更新**：每次回應結尾必須附上 JSON 區塊：
+   - **add_skills**：只有玩家經歷深刻鍛鍊/領悟/戰勝強敵時才賦予，格式：{"name":"名稱","type":"Active"|"Passive","cost":0,"description":"描述","reason":"獲得原因"}
+   - **chronicle_event**：本回合值得紀錄的事件標題，無則填 null
+   - **summary_delta**：只記錄「最近 5 輪以內」的即時劇情動態。日常對話/簡單移動請直接設為 null。
+     可填欄位（只填有變動的，靜態世界設定不屬於此欄位範疇）：
+     - activeThreads：當前活躍的劇情線
+     - npcStates：重要 NPC 的即時狀態
+     - plantedPayoffs：5輪內埋下或回收的伏筆
+     - arcPosition：劇情進度位置
+     - pcShift：角色心境或狀態轉變
 
-           - **劇情狀態 Delta (summary_delta)**：
-             - **只在本回合有明顯劇情變化時**（新 NPC 出現、伏筆埋下或回收、大地點切換、角色心境轉變），**才填寫有變動的欄位**。
-             - **若本回合只是日常對話或簡單移動，請將 summary_delta 直接設為 null**（前端將保留上一回合的狀態不變）。
-             - 欄位說明（只需填寫有變動的欄位，其餘省略）：
-               - activeThreads：當前活躍的劇情線
-               - npcStates：重要 NPC 的狀態
-               - plantedPayoffs：已埋下或回收的伏筆
-               - worldLock：世界觀固定事項
-               - arcPosition：劇情進度位置
-               - pcShift：角色心境或狀態轉變
-
-           格式：
-           ---UPDATE_START--- 
-           {
-             "hp_change": 0, 
-             "mp_change": 0,
-             "add_skills": [],
-             "chronicle_event": null,
-             "summary_delta": null
-           } 
-           ---UPDATE_END---
+   格式：
+   ---UPDATE_START--- 
+   {
+     "hp_change": 0, 
+     "mp_change": 0,
+     "add_skills": [],
+     "chronicle_event": null,
+     "summary_delta": null
+   } 
+   ---UPDATE_END---
       `;
 
       // *** JAILBREAK INJECTION ***
@@ -855,9 +856,14 @@ const App: React.FC = () => {
         ? gameState.loreBook.map(e => `[${e.category}][${e.id}] ${e.title}：${e.content}`).join('\n')
         : '（目前典籍為空）';
 
-      const resummaryPrompt = `你是一位故事的「記錄員」，不是 GM。
+      const resummaryPrompt = `你是「世界典籍管理員」，負責維護 15-20 輪以上的中期記憶。
 
-【當前 L1 Story State】
+【職責邊界 — 重要！】
+- 你只負責記錄「已鎖定的中期動態」：重要 NPC 的已確立狀態、已埋下且仍未回收的伏筆、劇情大綱事件、隱藏路線線索
+- 嚴禁把「世界觀背景、角色初始設定、基調氛圍」搬進典籍 — 那些屬於永久的 World Data 層，不需要你管
+- 嚴禁把「最近 5 輪的即時動態」搬進典籍 — 那些屬於 L1 Story State，會自動更新
+
+【L1 當前局勢 (短期參考)】
 ${storyStateToString(currentStoryState)}
 
 【現有 Lore Book 條目】
@@ -867,16 +873,21 @@ ${existingLore}
 ${historyText}
 
 任務：
-1. 比對 L1 Story State 與對話，找出任何已遺漏或需要補記的內容（重要 NPC、伏筆、世界規則、特殊協議等）。
-2. 輸出一個更新後的 Lore Book 條目陣列 JSON。
-   - 若現有條目內容有誤或需更新，可覆寫（保留相同 id）。
-   - 新增條目請給予新的唯一 id（例如 "lore_${Date.now()}_N"）。
-   - category 只能是: "npc" | "world" | "payoff" | "rule"
+1. 從對話中找出「應該被鎖定記錄」但尚未在典籍中的內容。
+2. 輸出更新後的條目陣列 JSON：
+   - 覆寫現有條目：保留相同 id
+   - 新增條目：給予新的唯一 id（格式 "lore_${Date.now()}_N"）
+   - category 只能是: "npc" | "world" | "payoff" | "rule" | "hidden_plot"
+     - npc：已確立的 NPC 背景/動機/狀態
+     - world：劇情中發現的世界規則/設定補充（非初始設定）
+     - payoff：已埋下且仍未回收的伏筆
+     - rule：玩家與 NPC 已達成的協議或特殊遊戲規則
+     - hidden_plot：玩家可能還不知道、但已在背景運作的隱藏劇情路線
 3. 若無需更新，輸出空陣列 []。
 
-只輸出 JSON 陣列，格式：
+只輸出 JSON 陣列：
 [
-  { "id": "lore_xxx", "category": "npc", "title": "NPC 名稱", "content": "狀態描述", "lockedAt": ${gameState.turnCount} }
+  { "id": "lore_xxx", "category": "npc", "title": "條目標題", "content": "詳細內容", "lockedAt": ${gameState.turnCount} }
 ]`;
 
       const raw = await generateCompletion(
@@ -1201,7 +1212,11 @@ ${historyText}
             gameState.loreBook.map(entry => (
               <div key={entry.id} className="border border-rpg-700/40 rounded-xl p-4 bg-rpg-900/50 shadow-inner">
                 <div className="flex items-center gap-3 mb-2">
-                  <span className="text-xs uppercase tracking-wider font-bold px-2 py-1 rounded bg-cyan-900/50 text-cyan-400 border border-cyan-800/50">
+                  <span className={`text-xs uppercase tracking-wider font-bold px-2 py-1 rounded border ${entry.category === 'hidden_plot' ? 'bg-purple-900/50 text-purple-400 border-purple-800/50' :
+                      entry.category === 'payoff' ? 'bg-amber-900/50 text-amber-500 border-amber-800/50' :
+                        entry.category === 'npc' ? 'bg-emerald-900/50 text-emerald-400 border-emerald-800/50' :
+                          'bg-cyan-900/50 text-cyan-400 border-cyan-800/50'
+                    }`}>
                     {loreCategoryLabel[entry.category]}
                   </span>
                   <span className="text-lg font-bold text-gray-200">{entry.title}</span>
@@ -1589,6 +1604,7 @@ ${historyText}
                     {skill.description}
                   </div>
                   {skill.cost > 0 && <div className="text-[10px] text-blue-400 mt-1.5 relative z-10">消耗: {skill.cost} MP</div>}
+                  {skill.reason && <div className="text-[9px] text-rpg-muted/50 italic mt-1 relative z-10 border-t border-white/5 pt-1">獲得：{skill.reason}</div>}
                 </div>
               ))}
               {gameState.character.skills.length === 0 && <span className="text-xs text-rpg-muted italic opacity-30 mt-2">尚未獲得任何技能...</span>}
