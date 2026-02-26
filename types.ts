@@ -26,11 +26,7 @@ export interface CharacterStats {
   race: string;
   class: string;
   level: number;
-  hp: number;
-  maxHp: number;
-  mp: number;
-  maxMp: number;
-  attributes: Record<string, number>;
+  stateDescription: string; // e.g. "生命值高、魔力值低、疲勞值高、飢餓值中、意志力低"
   skills: Skill[];
   statusEffects: string[];
   background: string;
@@ -109,11 +105,7 @@ export const DEFAULT_CHARACTER: CharacterStats = {
   race: '未知',
   class: '冒險者',
   level: 1,
-  hp: 100,
-  maxHp: 100,
-  mp: 50,
-  maxMp: 50,
-  attributes: {},
+  stateDescription: '健康、精神飽滿、狀態良好',
   skills: [],
   statusEffects: [],
   background: '尚未設定',

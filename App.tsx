@@ -513,8 +513,7 @@ const App: React.FC = () => {
         "world": { "name": "世界名", "description": "上述結構化的詳細文本", "promptMix": "風格標籤" },
         "character": {
           "name": "角色名", "race": "種族", "class": "職業", "level": 1,
-          "hp": 100, "maxHp": 100, "mp": 50, "maxMp": 50,
-          "attributes": { "力量": 10, "敏捷": 10, "智力": 10, "體質": 10 },
+          "stateDescription": "生命值高、魔力值低、疲勞值高、飢餓值中、意志力低",
           "skills": [
             { "name": "技能名", "type": "Active", "cost": 0, "description": "技能簡短描述" }
           ],
@@ -623,7 +622,7 @@ const App: React.FC = () => {
         isGameStarted: true,
         viewMode: 'RP',
         isLoading: false,
-        storyState: {
+        storyState: gameState.isGameStarted ? gameState.storyState : {
           activeThreads: '冒險開始',
           npcStates: '無',
           plantedPayoffs: '無',
@@ -698,10 +697,9 @@ const App: React.FC = () => {
 【世界觀、基調、角色設定、額外設定】
 ${gameState.world?.description}
 
-【角色數值】
+【角色當前狀態與能力】
 名稱：${gameState.character.name} | 種族：${gameState.character.race} | 職業：${gameState.character.class} | 等級：${gameState.character.level}
-HP：${gameState.character.hp}/${gameState.character.maxHp} | MP：${gameState.character.mp}/${gameState.character.maxMp}
-屬性：${JSON.stringify(gameState.character.attributes)}
+當前生理與心理狀態：${gameState.character.stateDescription}
 技能：${gameState.character.skills.map(s => `${s.name}(${s.type}, ${s.description})`).join(' / ') || '無'}
 狀態：${gameState.character.statusEffects.join(' / ') || '正常'}
 ${loreBookSection}
@@ -716,10 +714,12 @@ ${gameState.isStyleActive ? gameState.customStyle : '標準 TRPG 風格，繁體
 ━━━ [GM 規則] ━━━
 1. **連續性**：仔細閱讀對話紀錄，你的回應必須接續「最新的玩家行動」，絕不重複已發生的場景。
 2. **視角**：嚴格使用第二人稱「你」描述主角的經歷與感受。
-3. **行動裁定**：根據邏輯、角色能力、當前情境直接判斷成敗，不輸出擲骰數值。
-4. **建議行動**：劇情結束後列出兩個具體的建議行動。
+3. **對話純粹性（極重要）**：你的文字回覆應該完全是故事與對話。絕對禁止在文字中輸出「當前局勢」、「STORY STATE」、「摘要」等後台資訊。狀態只能更新在結尾的 JSON 區塊。
+4. **行動裁定**：根據邏輯、角色能力、當前情境直接判斷成敗，不輸出擲骰數值。
+5. **建議行動**：劇情結束後列出兩個具體的建議行動。
 
-5. **狀態更新**：每次回應結尾必須附上 JSON 區塊：
+6. **狀態更新**：每次回應結尾必須附上 JSON 區塊：
+   - **stateDescription**：若角色狀態改變（例如受傷、疲勞、魔力耗盡等），請更新此字串（如：「生命值低、右臂受傷、魔力值空、嚴重疲勞」），若無變化則填原字串
    - **add_skills**：只有玩家經歷深刻鍛鍊/領悟/戰勝強敵時才賦予，格式：{"name":"名稱","type":"Active"|"Passive","cost":0,"description":"描述","reason":"獲得原因"}
    - **chronicle_event**：本回合值得紀錄的事件標題，無則填 null
    - **summary_delta**：只記錄「最近 5 輪以內」的即時劇情動態。日常對話/簡單移動請直接設為 null。
@@ -733,8 +733,7 @@ ${gameState.isStyleActive ? gameState.customStyle : '標準 TRPG 風格，繁體
    格式：
    ---UPDATE_START--- 
    {
-     "hp_change": 0, 
-     "mp_change": 0,
+     "stateDescription": "${gameState.character.stateDescription}",
      "add_skills": [],
      "chronicle_event": null,
      "summary_delta": null
@@ -787,8 +786,9 @@ ${gameState.isStyleActive ? gameState.customStyle : '標準 TRPG 風格，繁體
           finalContent = finalContent.replace(updateRegex, '').trim();
 
           const newChar = { ...gameState.character };
-          if (updateData.hp_change) newChar.hp = Math.min(newChar.maxHp, Math.max(0, newChar.hp + updateData.hp_change));
-          if (updateData.mp_change) newChar.mp = Math.min(newChar.maxMp, Math.max(0, newChar.mp + updateData.mp_change));
+          if (updateData.stateDescription) {
+            newChar.stateDescription = updateData.stateDescription;
+          }
 
           if (updateData.add_skills && Array.isArray(updateData.add_skills)) {
             updateData.add_skills.forEach((s: any) => {
@@ -1213,9 +1213,9 @@ ${historyText}
               <div key={entry.id} className="border border-rpg-700/40 rounded-xl p-4 bg-rpg-900/50 shadow-inner">
                 <div className="flex items-center gap-3 mb-2">
                   <span className={`text-xs uppercase tracking-wider font-bold px-2 py-1 rounded border ${entry.category === 'hidden_plot' ? 'bg-purple-900/50 text-purple-400 border-purple-800/50' :
-                      entry.category === 'payoff' ? 'bg-amber-900/50 text-amber-500 border-amber-800/50' :
-                        entry.category === 'npc' ? 'bg-emerald-900/50 text-emerald-400 border-emerald-800/50' :
-                          'bg-cyan-900/50 text-cyan-400 border-cyan-800/50'
+                    entry.category === 'payoff' ? 'bg-amber-900/50 text-amber-500 border-amber-800/50' :
+                      entry.category === 'npc' ? 'bg-emerald-900/50 text-emerald-400 border-emerald-800/50' :
+                        'bg-cyan-900/50 text-cyan-400 border-cyan-800/50'
                     }`}>
                     {loreCategoryLabel[entry.category]}
                   </span>
@@ -1565,25 +1565,14 @@ ${historyText}
             <div className="text-sm text-rpg-accent font-bold tracking-tight">{gameState.character.race} · {gameState.character.class} <span className="text-white/40 ml-2">LEVEL {gameState.character.level}</span></div>
           </div>
 
-          <div className="space-y-6">
-            <div>
-              <div className="flex justify-between text-xs font-black mb-2 uppercase tracking-widest text-red-400"><span>Vitality (HP)</span><span>{gameState.character.hp} / {gameState.character.maxHp}</span></div>
-              <div className="h-3 bg-rpg-800 rounded-full border border-white/5 p-0.5"><div className="h-full bg-gradient-to-r from-red-700 to-red-400 rounded-full transition-all duration-1000" style={{ width: `${(gameState.character.hp / gameState.character.maxHp) * 100}%` }} /></div>
+          <div className="bg-white/5 p-4 rounded-2xl border border-white/5 relative overflow-hidden group">
+            <div className="absolute inset-0 bg-gradient-to-br from-white/0 to-white/5 opacity-0 group-hover:opacity-100 transition-opacity" />
+            <div className="text-[10px] text-rpg-muted uppercase tracking-[0.3em] font-bold mb-2 flex items-center gap-2">
+              <Icon name="user" className="w-3 h-3" /> 當前生理與心理狀態
             </div>
-
-            <div>
-              <div className="flex justify-between text-xs font-black mb-2 uppercase tracking-widest text-blue-400"><span>Aether (MP)</span><span>{gameState.character.mp} / {gameState.character.maxMp}</span></div>
-              <div className="h-3 bg-rpg-800 rounded-full border border-white/5 p-0.5"><div className="h-full bg-gradient-to-r from-blue-700 to-blue-400 rounded-full transition-all duration-1000" style={{ width: `${(gameState.character.mp / gameState.character.maxMp) * 100}%` }} /></div>
+            <div className="text-sm text-gray-200 leading-relaxed font-bold tracking-wide relative z-10">
+              {gameState.character.stateDescription}
             </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            {Object.entries(gameState.character.attributes).map(([key, val]) => (
-              <div key={key} className="bg-white/5 p-4 rounded-2xl border border-white/5 flex flex-col items-center hover:bg-white/10 transition-colors group">
-                <div className="text-[10px] text-rpg-muted mb-1 group-hover:text-rpg-accent transition-colors">{key}</div>
-                <div className="text-2xl font-mono text-rpg-accent font-black tracking-tighter">{val}</div>
-              </div>
-            ))}
           </div>
 
           <div>
