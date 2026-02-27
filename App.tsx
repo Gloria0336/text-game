@@ -13,6 +13,7 @@ import {
 } from './types';
 import { INITIAL_STYLE_BOOK } from './constants';
 import { fetchModels, generateCompletion } from './services/openRouterService';
+import { GAME_TOOLS } from './tools';
 import Button from './components/Button';
 import Input from './components/Input';
 
@@ -450,7 +451,7 @@ const App: React.FC = () => {
         }
       }
 
-      const response = await generateCompletion(
+      const { content: response } = await generateCompletion(
         gameState.apiKey,
         gameState.selectedModel,
         [{ role: 'system', content: systemPrompt }, ...historyForApi]
@@ -534,7 +535,7 @@ const App: React.FC = () => {
         { role: 'user', content: extractPrompt }
       ];
 
-      const jsonStr = await generateCompletion(
+      const { content: jsonStr } = await generateCompletion(
         gameState.apiKey,
         gameState.selectedModel,
         messagesForExtraction,
@@ -605,7 +606,7 @@ const App: React.FC = () => {
           3. 不需要 JSON 狀態更新，僅輸出文字。
         `;
 
-        const openingText = await generateCompletion(
+        const { content: openingText } = await generateCompletion(
           gameState.apiKey,
           gameState.selectedModel,
           [{ role: 'system', content: openingPrompt }]
@@ -765,13 +766,79 @@ ${gameState.isStyleActive ? gameState.customStyle : '標準 TRPG 風格，繁體
         return msg;
       });
 
-      const responseContent = await generateCompletion(
+      // 3. Late-Stage Override (強制狀態覆寫) 注入到最新的 User Input 底部
+      const lastIndex = cleanHistory.length - 1;
+      if (lastIndex >= 0 && cleanHistory[lastIndex].role === 'user') {
+        const stateInjection = `\n\n--- STRICT CURRENT STATE (OVERRIDES PREVIOUS LORE) ---
+[System Note: Maintain strict consistency. Do NOT use items not listed here.]
+Head: ${gameState.character.equipment?.head || '無'}
+Body: ${gameState.character.equipment?.body || '無'}
+Feet: ${gameState.character.equipment?.feet || '無'}
+Weapon: ${gameState.character.equipment?.weapon || '無'}
+Accessory: ${gameState.character.equipment?.accessory || '無'}
+Status Effects: ${gameState.character.statusEffects?.length > 0 ? gameState.character.statusEffects.join(', ') : '無'}
+------------------------------------------------------`;
+        cleanHistory[lastIndex] = {
+          ...cleanHistory[lastIndex],
+          content: cleanHistory[lastIndex].content + stateInjection
+        };
+      }
+
+      let { content: responseContent, toolCalls } = await generateCompletion(
         gameState.apiKey,
         gameState.selectedModel,
-        [{ role: 'system', content: systemPrompt }, ...cleanHistory]
+        [{ role: 'system', content: systemPrompt }, ...cleanHistory],
+        0.7,
+        undefined,
+        GAME_TOOLS
       );
 
-      let finalContent = responseContent;
+      let finalContent = responseContent || '';
+      let newChar = { ...gameState.character };
+
+      // --- 4. Tool Call 攔截與二次生成 ---
+      if (toolCalls && toolCalls.length > 0) {
+        const toolMessages: any[] = [];
+
+        for (const tc of toolCalls) {
+          try {
+            const args = JSON.parse(tc.function.arguments);
+            if (tc.function.name === 'update_equipment') {
+              newChar.equipment = {
+                head: args.head !== undefined ? (args.head === 'null' || args.head === '' ? undefined : args.head) : newChar.equipment?.head,
+                body: args.body !== undefined ? (args.body === 'null' || args.body === '' ? undefined : args.body) : newChar.equipment?.body,
+                feet: args.feet !== undefined ? (args.feet === 'null' || args.feet === '' ? undefined : args.feet) : newChar.equipment?.feet,
+                weapon: args.weapon !== undefined ? (args.weapon === 'null' || args.weapon === '' ? undefined : args.weapon) : newChar.equipment?.weapon,
+                accessory: args.accessory !== undefined ? (args.accessory === 'null' || args.accessory === '' ? undefined : args.accessory) : newChar.equipment?.accessory,
+              };
+              toolMessages.push({ role: 'tool', tool_call_id: tc.id, name: tc.function.name, content: "Equipment updated successfully." });
+            } else if (tc.function.name === 'update_status') {
+              if (args.statusEffects && Array.isArray(args.statusEffects)) {
+                newChar.statusEffects = args.statusEffects;
+              }
+              toolMessages.push({ role: 'tool', tool_call_id: tc.id, name: tc.function.name, content: "Status updated successfully." });
+            }
+          } catch (e) {
+            console.warn("Failed to parse tool call arguments:", e);
+            toolMessages.push({ role: 'tool', tool_call_id: tc.id, name: tc.function.name, content: "Error parsing arguments." });
+          }
+        }
+
+        // 把 AI 的 Tool Call 與我們的 Tool Messages 結合後再發送一次
+        const secondRoundMessages: any[] = [
+          { role: 'system', content: systemPrompt },
+          ...cleanHistory,
+          { role: 'assistant', content: responseContent || "", tool_calls: toolCalls },
+          ...toolMessages
+        ];
+
+        const secondResponse = await generateCompletion(
+          gameState.apiKey,
+          gameState.selectedModel,
+          secondRoundMessages
+        );
+        finalContent = secondResponse.content || '';
+      }
 
       // Process Update Block
       const updateRegex = /---UPDATE_START---([\s\S]*?)---UPDATE_END---/;
@@ -862,6 +929,7 @@ ${gameState.isStyleActive ? gameState.customStyle : '標準 TRPG 風格，繁體
 - 你只負責記錄「已鎖定的中期動態」：重要 NPC 的已確立狀態、已埋下且仍未回收的伏筆、劇情大綱事件、隱藏路線線索
 - 嚴禁把「世界觀背景、角色初始設定、基調氛圍」搬進典籍 — 那些屬於永久的 World Data 層，不需要你管
 - 嚴禁把「最近 5 輪的即時動態」搬進典籍 — 那些屬於 L1 Story State，會自動更新
+- 絕對嚴禁記錄角色當下「穿著什麼裝備」、「手持什麼武器」或「受到什麼暫時性狀態影響(如中毒、受傷)」。這些屬於獨立狀態層，你不需記錄。
 
 【L1 當前局勢 (短期參考)】
 ${storyStateToString(currentStoryState)}
@@ -890,7 +958,7 @@ ${historyText}
   { "id": "lore_xxx", "category": "npc", "title": "條目標題", "content": "詳細內容", "lockedAt": ${gameState.turnCount} }
 ]`;
 
-      const raw = await generateCompletion(
+      const { content: raw } = await generateCompletion(
         gameState.apiKey,
         gameState.selectedModel,
         [{ role: 'user', content: resummaryPrompt }],

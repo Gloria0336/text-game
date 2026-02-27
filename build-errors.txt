@@ -1,0 +1,13 @@
+﻿infinite-text-adventure/App.tsx(419,22): error TS2322: Type 'Message | { role: "assistant"; content: { content: string; toolCalls?: any[]; }; }' is not assignable to type 'Message'.
+  Type '{ role: "assistant"; content: { content: string; toolCalls?: any[]; }; }' is not assignable to type 'Message'.
+    Types of property 'content' are incompatible.
+      Type '{ content: string; toolCalls?: any[]; }' is not assignable to type 'string'.
+infinite-text-adventure/App.tsx(419,55): error TS2322: Type '{ content: string; toolCalls?: any[]; }' is not assignable to type 'string'.
+infinite-text-adventure/App.tsx(504,31): error TS2339: Property 'replace' does not exist on type '{ content: string; toolCalls?: any[]; }'.
+infinite-text-adventure/App.tsx(739,43): error TS2339: Property 'match' does not exist on type '{ content: string; toolCalls?: any[]; }'.
+infinite-text-adventure/App.tsx(744,39): error TS2339: Property 'replace' does not exist on type '{ content: string; toolCalls?: any[]; }'.
+infinite-text-adventure/App.tsx(771,20): error TS2322: Type 'Message | { role: "assistant"; content: { content: string; toolCalls?: any[]; }; }' is not assignable to type 'Message'.
+  Type '{ role: "assistant"; content: { content: string; toolCalls?: any[]; }; }' is not assignable to type 'Message'.
+    Types of property 'content' are incompatible.
+      Type '{ content: string; toolCalls?: any[]; }' is not assignable to type 'string'.
+infinite-text-adventure/App.tsx(771,60): error TS2322: Type '{ content: string; toolCalls?: any[]; }' is not assignable to type 'string'.

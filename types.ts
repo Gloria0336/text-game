@@ -21,14 +21,23 @@ export interface ChronicleEntry {
   event: string;
 }
 
+export interface Equipment {
+  head?: string;
+  body?: string;
+  feet?: string;
+  weapon?: string;
+  accessory?: string;
+}
+
 export interface CharacterStats {
   name: string;
   race: string;
   class: string;
   level: number;
-  stateDescription: string; // e.g. "生命值高、魔力值低、疲勞值高、飢餓值中、意志力低"
+  stateDescription: string; // e.g. "生命值高、魔力值低、疲勞值高、飢餓值中、意志力低" (保留作為綜合描述體感)
+  equipment: Equipment;     // 絕對狀態：實體裝備
   skills: Skill[];
-  statusEffects: string[];
+  statusEffects: string[];  // 絕對狀態：暫時性 Buff/Debuff e.g. ["中毒", "力竭"]
   background: string;
 }
 
@@ -106,6 +115,13 @@ export const DEFAULT_CHARACTER: CharacterStats = {
   class: '冒險者',
   level: 1,
   stateDescription: '健康、精神飽滿、狀態良好',
+  equipment: {
+    head: '無',
+    body: '破舊麻布衣',
+    feet: '草鞋',
+    weapon: '新手的木棍',
+    accessory: '無'
+  },
   skills: [],
   statusEffects: [],
   background: '尚未設定',
