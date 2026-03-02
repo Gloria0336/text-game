@@ -76,6 +76,25 @@ export interface LoreEntry {
   expireAtTurn?: number;   // 可選：預計過期的回合數（用於標記短命的中期記憶）
 }
 
+// --- L3: Long-term Memory (RAG Vector Store) ---
+export interface VectorEntry {
+  id: string;
+  text: string;
+  vector: number[];
+  metadata: {
+    turn: number;
+    source: 'message' | 'lore';
+    category?: LoreCategory;
+    timestamp: number;
+  };
+}
+
+export interface RAGResult {
+  text: string;
+  score: number;
+  metadata: VectorEntry['metadata'];
+}
+
 export interface GameState {
   // Settings
   apiKey: string;
@@ -107,6 +126,7 @@ export interface GameState {
   loreBook: LoreEntry[];    // L2: permanent, updated by background auto-summary
   summaryJobStatus: SummaryJobStatus; // Background summary job status
   lastSummaryTurn: number;  // Turn number of last successful summary
+  ragReady: boolean;        // L3: Whether the RAG worker is initialized
 
   turnCount: number;
   isLoading: boolean;

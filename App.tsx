@@ -13,7 +13,8 @@ import {
 } from './types';
 import { INITIAL_STYLE_BOOK } from './constants';
 import { fetchModels, generateCompletion } from './services/openRouterService';
-import { runAutoSummary } from './services/memoryService';
+import { runAutoSummary, pruneLoreBook } from './services/memoryService';
+import { initRAG, retrieveRelevantMemory, archiveMessages } from './services/ragService';
 import { GAME_TOOLS } from './tools';
 import Button from './components/Button';
 import Input from './components/Input';
@@ -121,6 +122,7 @@ const DiceResultCard = ({ data }: { data: DiceRollData }) => {
 
 // --- HELPERS: Memory System ---
 const AUTO_SUMMARY_INTERVAL = 5;
+const LORE_BOOK_CHAR_CAP = 3000; // ~2000 tokens, 超過從最舊條目開始丟棄
 
 const storyStateToString = (s: StoryState): string =>
   `📍 當前局勢 [L1·短期·5輪內]
@@ -171,6 +173,7 @@ const createInitialState = (): GameState => ({
   loreBook: [],
   summaryJobStatus: 'idle',
   lastSummaryTurn: 0,
+  ragReady: false,
   turnCount: 0,
   isLoading: false,
   error: null,
@@ -222,6 +225,13 @@ const App: React.FC = () => {
     } catch (e) {
       console.error("Failed to load profiles", e);
     }
+  }, []);
+
+  // --- Effects: Init RAG Worker ---
+  useEffect(() => {
+    initRAG()
+      .then(() => updateState({ ragReady: true }))
+      .catch(() => console.warn('[App] RAG unavailable, L3 disabled.'));
   }, []);
 
   // --- Effects: Auto Save ---
@@ -666,14 +676,36 @@ const App: React.FC = () => {
   // 抽出共用的生成邏輯
   const executeRPGeneration = async (currentHistory: Message[]) => {
     try {
-      // --- [L2] 中期記憶：建構 Lore Book 區塊 ---
-      const loreBookSection = gameState.loreBook.length > 0
-        ? `\n━━━ [LORE BOOK — 中期記憶·15輪以上的劇情事件/伏筆/隱藏路線] ━━━\n` +
-        `這些是過去已發生並鎖定的劇情，視為既成事實，不可矛盾。\n` +
-        gameState.loreBook.map(e =>
-          `[${loreCategoryLabel[e.category]}] ${e.title}：${e.content}`
-        ).join('\n')
-        : '';
+      // --- [L3] 長期記憶：RAG 檢索 (async, 但需等待結果) ---
+      let longTermSection = '';
+      if (gameState.ragReady) {
+        try {
+          const queryCtx = `${storyStateToString(gameState.storyState)}\n${currentHistory[currentHistory.length - 1]?.content ?? ''}`;
+          longTermSection = await retrieveRelevantMemory(queryCtx);
+        } catch (e) {
+          console.warn('[App] L3 retrieve failed, skipping:', e);
+        }
+      }
+
+      // --- [L2] 中期記憶：建構 Lore Book 區塊 (prune + token cap) ---
+      const activeLore = pruneLoreBook(gameState.loreBook, gameState.turnCount);
+      let loreBookSection = '';
+      if (activeLore.length > 0) {
+        // 從最新條目開始保留，超過字元上限時丟棄最舊的
+        const loreLines: string[] = [];
+        let charCount = 0;
+        for (let i = activeLore.length - 1; i >= 0; i--) {
+          const line = `[${loreCategoryLabel[activeLore[i].category]}] ${activeLore[i].title}：${activeLore[i].content}`;
+          if (charCount + line.length > LORE_BOOK_CHAR_CAP) break;
+          loreLines.unshift(line);
+          charCount += line.length;
+        }
+        const omitted = activeLore.length - loreLines.length;
+        loreBookSection = `\n━━━ [LORE BOOK — 中期記憶·已鎖定的劇情事件/伏筆/隱藏路線] ━━━\n` +
+          `這些是過去已發生並鎖定的劇情，視為既成事實，不可矛盾。\n` +
+          (omitted > 0 ? `（注意：已省略 ${omitted} 條較早的條目）\n` : '') +
+          loreLines.join('\n');
+      }
 
       let systemPrompt = `你是一個專業的 TRPG GM，負責主持一個沉浸式的互動故事。
 
@@ -691,6 +723,7 @@ ${gameState.world?.description}
 當前生理與心理狀態：${gameState.character.stateDescription}
 技能：${gameState.character.skills.map(s => `${s.name}(${s.type}, ${s.description})`).join(' / ') || '無'}
 狀態：${gameState.character.statusEffects.join(' / ') || '正常'}
+${longTermSection}
 ${loreBookSection}
 
 ━━━ [STORY STATE — 短期記憶·最近 5 輪的即時動態] ━━━
@@ -727,8 +760,14 @@ ${gameState.isStyleActive ? gameState.customStyle : '標準 TRPG 風格，繁體
         systemPrompt += `\n\n${JAILBREAK_PROMPT}`;
       }
 
-      // 1. 擴大上下文窗口 (Context Window)
+      // 1. 擴大上下文窗口 (Context Window) + L3 Archive 舊訊息
       const HISTORY_LIMIT = 30;
+      if (currentHistory.length > HISTORY_LIMIT && gameState.ragReady) {
+        const discarded = currentHistory.slice(0, currentHistory.length - HISTORY_LIMIT);
+        archiveMessages(discarded, gameState.turnCount).catch(e =>
+          console.warn('[App] L3 archive failed:', e)
+        );
+      }
       let rawHistory = currentHistory.slice(-HISTORY_LIMIT);
 
       // 2. 清理歷史訊息 (防止 AI 讀到舊的 metadata 導致重複或混淆)

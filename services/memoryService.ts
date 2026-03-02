@@ -1,5 +1,6 @@
 import { Message, StoryState, LoreEntry, LoreCategory } from '../types';
 import { generateCompletion } from './openRouterService';
+import { archiveExpiredLore } from './ragService';
 
 // --- Types ---
 export interface AutoSummaryInput {
@@ -26,6 +27,10 @@ NPC States: ${s.npcStates}
 Planted Payoffs: ${s.plantedPayoffs}
 Arc Position: ${s.arcPosition}
 PC Shift: ${s.pcShift}`;
+
+/** Remove lore entries that have expired based on the current turn. */
+export const pruneLoreBook = (loreBook: LoreEntry[], currentTurn: number): LoreEntry[] =>
+    loreBook.filter(e => !e.expireAtTurn || currentTurn < e.expireAtTurn);
 
 /** Strip system metadata from message content for summarization. */
 const cleanMessageContent = (content: string): string =>
@@ -145,13 +150,26 @@ export async function runAutoSummary(input: AutoSummaryInput): Promise<AutoSumma
         }
     }
 
+    // Prune expired lore entries
+    const prunedLore = pruneLoreBook(mergedLore, input.turnCount);
+    const expiredEntries = mergedLore.filter(e => !prunedLore.includes(e));
+    const pruneCount = expiredEntries.length;
+
+    // Archive expired entries to L3 vector store (async, non-blocking)
+    if (expiredEntries.length > 0) {
+        archiveExpiredLore(expiredEntries).catch(err =>
+            console.warn('[AutoSummary] Failed to archive expired lore to L3:', err)
+        );
+    }
+
     console.info(
         `[AutoSummary] Complete @ turn ${input.turnCount}. ` +
-        `StoryState updated. ${newLoreEntries.length} lore entries updated/added.`
+        `StoryState updated. ${newLoreEntries.length} lore entries updated/added.` +
+        (pruneCount > 0 ? ` ${pruneCount} expired entries pruned & archived.` : '')
     );
 
     return {
         storyState: newStoryState,
-        loreBook: mergedLore,
+        loreBook: prunedLore,
     };
 }
