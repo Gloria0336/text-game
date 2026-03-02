@@ -65,6 +65,8 @@ export interface StoryState {
 // --- L2: Lore Book Entry (中期 15-20 輪劇情大綱/伏筆/隱藏路線) ---
 export type LoreCategory = 'npc' | 'world' | 'payoff' | 'rule' | 'hidden_plot';
 
+export type SummaryJobStatus = 'idle' | 'running' | 'done' | 'error';
+
 export interface LoreEntry {
   id: string;
   category: LoreCategory;
@@ -101,8 +103,10 @@ export interface GameState {
   messages: Message[];
 
   // Memory System
-  storyState: StoryState;   // L1: volatile, updated each turn (delta merge)
-  loreBook: LoreEntry[];    // L2: permanent, updated every RESUMMARY_INTERVAL turns
+  storyState: StoryState;   // L1: volatile, updated by background auto-summary
+  loreBook: LoreEntry[];    // L2: permanent, updated by background auto-summary
+  summaryJobStatus: SummaryJobStatus; // Background summary job status
+  lastSummaryTurn: number;  // Turn number of last successful summary
 
   turnCount: number;
   isLoading: boolean;

@@ -13,6 +13,7 @@ import {
 } from './types';
 import { INITIAL_STYLE_BOOK } from './constants';
 import { fetchModels, generateCompletion } from './services/openRouterService';
+import { runAutoSummary } from './services/memoryService';
 import { GAME_TOOLS } from './tools';
 import Button from './components/Button';
 import Input from './components/Input';
@@ -119,7 +120,7 @@ const DiceResultCard = ({ data }: { data: DiceRollData }) => {
 };
 
 // --- HELPERS: Memory System ---
-const RESUMMARY_INTERVAL = 15;
+const AUTO_SUMMARY_INTERVAL = 5;
 
 const storyStateToString = (s: StoryState): string =>
   `📍 當前局勢 [L1·短期·5輪內]
@@ -128,21 +129,6 @@ NPC States: ${s.npcStates}
 Planted Payoffs: ${s.plantedPayoffs}
 Arc Position: ${s.arcPosition}
 PC Shift: ${s.pcShift}`;
-
-/** Merge AI-returned delta onto existing storyState (null-safe). */
-const mergeSummaryDelta = (
-  prev: StoryState,
-  delta: Partial<StoryState> | null | undefined
-): StoryState => {
-  if (!delta) return prev;
-  return {
-    activeThreads: delta.activeThreads ?? prev.activeThreads,
-    npcStates: delta.npcStates ?? prev.npcStates,
-    plantedPayoffs: delta.plantedPayoffs ?? prev.plantedPayoffs,
-    arcPosition: delta.arcPosition ?? prev.arcPosition,
-    pcShift: delta.pcShift ?? prev.pcShift,
-  };
-};
 
 const loreCategoryLabel: Record<LoreEntry['category'], string> = {
   npc: 'NPC',
@@ -183,6 +169,8 @@ const createInitialState = (): GameState => ({
   messages: [],
   storyState: DEFAULT_STORY_STATE,
   loreBook: [],
+  summaryJobStatus: 'idle',
+  lastSummaryTurn: 0,
   turnCount: 0,
   isLoading: false,
   error: null,
@@ -723,21 +711,13 @@ ${gameState.isStyleActive ? gameState.customStyle : '標準 TRPG 風格，繁體
    - **stateDescription**：若角色狀態改變（例如受傷、疲勞、魔力耗盡等），請更新此字串（如：「生命值低、右臂受傷、魔力值空、嚴重疲勞」），若無變化則填原字串
    - **add_skills**：只有玩家經歷深刻鍛鍊/領悟/戰勝強敵時才賦予，格式：{"name":"名稱","type":"Active"|"Passive","cost":0,"description":"描述","reason":"獲得原因"}
    - **chronicle_event**：本回合值得紀錄的事件標題，無則填 null
-   - **summary_delta**：只記錄「最近 5 輪以內」的即時劇情動態。日常對話/簡單移動請直接設為 null。
-     可填欄位（只填有變動的，靜態世界設定不屬於此欄位範疇）：
-     - activeThreads：當前活躍的劇情線
-     - npcStates：重要 NPC 的即時狀態
-     - plantedPayoffs：5輪內埋下或回收的伏筆
-     - arcPosition：劇情進度位置
-     - pcShift：角色心境或狀態轉變
 
    格式：
    ---UPDATE_START--- 
    {
      "stateDescription": "${gameState.character.stateDescription}",
      "add_skills": [],
-     "chronicle_event": null,
-     "summary_delta": null
+     "chronicle_event": null
    } 
    ---UPDATE_END---
       `;
@@ -879,10 +859,7 @@ Status Effects: ${gameState.character.statusEffects?.length > 0 ? gameState.char
             });
           }
 
-          // L1 Delta Merge — only update changed fields
-          newStoryState = mergeSummaryDelta(gameState.storyState, updateData.summary_delta ?? null);
-
-          updateState({ character: newChar, storyState: newStoryState, chronicle: newChronicle });
+          updateState({ character: newChar, chronicle: newChronicle });
         } catch (e) {
           console.warn('Update parse fail', e);
         }
@@ -896,9 +873,29 @@ Status Effects: ${gameState.character.statusEffects?.length > 0 ? gameState.char
         turnCount: nextTurn,
       });
 
-      // Trigger deep resummary every RESUMMARY_INTERVAL turns (async, non-blocking)
-      if (nextTurn > 0 && nextTurn % RESUMMARY_INTERVAL === 0) {
-        triggerDeepResummary(currentHistory, newStoryState);
+      // Trigger background auto-summary every AUTO_SUMMARY_INTERVAL turns (async, non-blocking)
+      if (nextTurn > 0 && nextTurn % AUTO_SUMMARY_INTERVAL === 0) {
+        updateState({ summaryJobStatus: 'running' });
+        runAutoSummary({
+          apiKey: gameState.apiKey,
+          model: gameState.selectedModel,
+          recentMessages: currentHistory.slice(-10),
+          currentStoryState: gameState.storyState,
+          currentLoreBook: gameState.loreBook,
+          turnCount: nextTurn,
+        })
+          .then(result => {
+            updateState({
+              storyState: result.storyState,
+              loreBook: result.loreBook,
+              summaryJobStatus: 'done',
+              lastSummaryTurn: nextTurn,
+            });
+          })
+          .catch(err => {
+            console.warn('[AutoSummary] Failed:', err);
+            updateState({ summaryJobStatus: 'error' });
+          });
       }
 
     } catch (err) {
@@ -906,93 +903,7 @@ Status Effects: ${gameState.character.statusEffects?.length > 0 ? gameState.char
     }
   };
 
-  /** L2 Deep Resummary — runs in background, updates loreBook without blocking the UI */
-  const triggerDeepResummary = async (recentHistory: Message[], currentStoryState: StoryState) => {
-    try {
-      const historyText = recentHistory
-        .slice(-30)
-        .map(m => `${m.role === 'user' ? '玩家' : 'GM'}: ${m.content
-          .replace(/---UPDATE_START---[\s\S]*?---UPDATE_END---/g, '')
-          .replace(/---DICE_START---[\s\S]*?---DICE_END---/g, '')
-          .replace(/<think>[\s\S]*?<\/think>/g, '')
-          .trim()
-          .slice(0, 300)}`)
-        .join('\n\n');
 
-      const existingLore = gameState.loreBook.length > 0
-        ? gameState.loreBook.map(e => `[${e.category}][${e.id}] ${e.title}：${e.content}`).join('\n')
-        : '（目前典籍為空）';
-
-      const resummaryPrompt = `你是「世界典籍管理員」，負責維護 15-20 輪以上的中期記憶。
-
-【職責邊界 — 重要！】
-- 你只負責記錄「已鎖定的中期動態」：重要 NPC 的已確立狀態、已埋下且仍未回收的伏筆、劇情大綱事件、隱藏路線線索
-- 嚴禁把「世界觀背景、角色初始設定、基調氛圍」搬進典籍 — 那些屬於永久的 World Data 層，不需要你管
-- 嚴禁把「最近 5 輪的即時動態」搬進典籍 — 那些屬於 L1 Story State，會自動更新
-- 絕對嚴禁記錄角色當下「穿著什麼裝備」、「手持什麼武器」或「受到什麼暫時性狀態影響(如中毒、受傷)」。這些屬於獨立狀態層，你不需記錄。
-
-【L1 當前局勢 (短期參考)】
-${storyStateToString(currentStoryState)}
-
-【現有 Lore Book 條目】
-${existingLore}
-
-【最近 ${recentHistory.length} 則對話片段】
-${historyText}
-
-任務：
-1. 從對話中找出「應該被鎖定記錄」但尚未在典籍中的內容。
-2. 輸出更新後的條目陣列 JSON：
-   - 覆寫現有條目：保留相同 id
-   - 新增條目：給予新的唯一 id（格式 "lore_${Date.now()}_N"）
-   - category 只能是: "npc" | "world" | "payoff" | "rule" | "hidden_plot"
-     - npc：已確立的 NPC 背景/動機/狀態
-     - world：劇情中發現的世界規則/設定補充（非初始設定）
-     - payoff：已埋下且仍未回收的伏筆
-     - rule：玩家與 NPC 已達成的協議或特殊遊戲規則
-     - hidden_plot：玩家可能還不知道、但已在背景運作的隱藏劇情路線
-3. 若無需更新，輸出空陣列 []。
-
-只輸出 JSON 陣列：
-[
-  { "id": "lore_xxx", "category": "npc", "title": "條目標題", "content": "詳細內容", "lockedAt": ${gameState.turnCount} }
-]`;
-
-      const { content: raw } = await generateCompletion(
-        gameState.apiKey,
-        gameState.selectedModel,
-        [{ role: 'user', content: resummaryPrompt }],
-        0.2,
-        'json_object'
-      );
-
-      // Parse — extract array from response
-      let cleanRaw = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-      cleanRaw = cleanRaw.replace(/```json/gi, '').replace(/```/g, '').trim();
-      const arrStart = cleanRaw.indexOf('[');
-      const arrEnd = cleanRaw.lastIndexOf(']');
-      if (arrStart === -1 || arrEnd === -1) return;
-
-      const loreArray: LoreEntry[] = JSON.parse(cleanRaw.substring(arrStart, arrEnd + 1));
-      if (!Array.isArray(loreArray) || loreArray.length === 0) return;
-
-      // Merge: keep existing entries not in the new array, add/overwrite updated ones
-      const updatedLore = [...gameState.loreBook];
-      for (const newEntry of loreArray) {
-        const idx = updatedLore.findIndex(e => e.id === newEntry.id);
-        if (idx >= 0) {
-          updatedLore[idx] = newEntry;
-        } else {
-          updatedLore.push(newEntry);
-        }
-      }
-
-      updateState({ loreBook: updatedLore });
-      console.info(`[LoreBook] Deep resummary complete. ${loreArray.length} entries updated/added.`);
-    } catch (err) {
-      console.warn('[LoreBook] Deep resummary failed silently:', err);
-    }
-  };
 
 
 
