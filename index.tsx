@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import StoryApp from './StoryApp';
+import StoryTheaterApp from './StoryTheaterApp';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -10,6 +10,6 @@ if (!rootElement) {
 const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
-    <StoryApp />
+    <StoryTheaterApp />
   </React.StrictMode>
 );
